@@ -31,11 +31,15 @@ import { readableError } from './supabase.js';
 import { session } from './auth.js';
 import { formatRatingDelta, formatRating } from './elo.js';
 import { flyTableAway, flyDraw, flyDeal, clearEffects, reducedMotion } from './fx.js';
-import { play as playSound, playRepeat, isMuted, toggleMuted } from './sound.js';
+import { play as playSound, isMuted, toggleMuted } from './sound.js';
 import { $, show, setText, clear, toast, cardEl } from './ui.js';
 
 /** How long the finished table stays on screen before the scores appear. */
 const RESULT_DELAY_MS = 2200;
+
+/** Dealing: gap between cards leaving the stock, and how long each is in the air. */
+const DEAL_GAP_MS = 90;
+const DEAL_FLIGHT_MS = 320;
 
 let game = null;       // the games row, seats sorted
 let confirmed = null;  // the last position the server acknowledged
@@ -49,7 +53,8 @@ let resultShown = false;
 let resultTimer = null;
 let dealing = false;    // opening hands still flying out
 let dealPlayed = false; // only deal once per visit to a table
-let dealTimer = null;
+let dealTimers = [];
+let dealt = [];         // cards landed so far, per seat
 
 export function initGame() {
   $('#act-take').addEventListener('click', () => play({ type: 'take' }));
@@ -133,10 +138,11 @@ function reset() {
   unwatch = null;
   clearTimeout(resultTimer);
   resultTimer = null;
-  clearTimeout(dealTimer);
-  dealTimer = null;
+  dealTimers.forEach(clearTimeout);
+  dealTimers = [];
   dealing = false;
   dealPlayed = false;
+  dealt = [];
   clearEffects();
   game = null;
   confirmed = null;
@@ -231,32 +237,52 @@ function present(previous, next) {
 }
 
 /**
- * Deal the opening hands one card at a time. The hands are held back until the
- * cards land, so the deal is something to watch rather than a decoration over
- * a table that already has everything on it.
+ * Deal the opening hands one card at a time.
+ *
+ * Each card appears in its hand at the moment it lands, not before, so the deal
+ * reads as cards arriving rather than as decoration over a table that already
+ * has everything on it.
  */
 function startDeal() {
   playSound('start');
+  dealt = new Array(state.playerCount).fill(0);
 
   requestAnimationFrame(() => {
     if (!state) return;
-    const targets = [];
-    for (let i = 0; i < state.playerCount; i++) {
-      const seat = (mySeat + i) % state.playerCount;
-      targets.push(seat === mySeat ? $('#my-hand') : seatPanel(seat));
-    }
 
-    const ms = flyDeal($('#deck-pile'), targets, HAND_SIZE, {
-      gap: 55,
-      onCard: () => playSound('draw'),
+    const order = [];
+    for (let i = 0; i < state.playerCount; i++) order.push((mySeat + i) % state.playerCount);
+    const targets = order.map((seat) => (seat === mySeat ? $('#my-hand') : seatPanel(seat)));
+
+    const total = flyDeal($('#deck-pile'), targets, HAND_SIZE, {
+      gap: DEAL_GAP_MS,
+      flight: DEAL_FLIGHT_MS,
     });
 
-    clearTimeout(dealTimer);
-    dealTimer = setTimeout(() => {
-      dealTimer = null;
+    if (!total) {          // reduced motion, or nothing measurable to fly from
+      dealt = state.hands.map((hand) => hand.length);
       dealing = false;
       render();
-    }, ms);
+      return;
+    }
+
+    // Reveal each card as its clone arrives.
+    let index = 0;
+    for (let round = 0; round < HAND_SIZE; round++) {
+      for (const seat of order) {
+        const at = index * DEAL_GAP_MS + DEAL_FLIGHT_MS;
+        dealTimers.push(setTimeout(() => {
+          dealt[seat] += 1;
+          render();
+        }, at));
+        index++;
+      }
+    }
+
+    dealTimers.push(setTimeout(() => {
+      dealing = false;
+      render();
+    }, total + 60));
   });
 }
 
@@ -299,7 +325,7 @@ function runEffects(previous, next, events) {
       const start = ending && !reducedMotion() ? 260 : 0;
       setTimeout(() => flyDraw(stock, target, gained), start);
     }
-    if (total > 0) setTimeout(() => playRepeat('draw', total), ending ? 300 : 40);
+    void total;
   }
 }
 
@@ -561,12 +587,12 @@ function renderOpponents() {
 
     const fan = document.createElement('div');
     fan.className = 'fan fan--opponent';
-    const count = dealing ? 0 : state.hands[seat].length;
+    const count = dealing ? (dealt[seat] ?? 0) : state.hands[seat].length;
     for (let i = 0; i < Math.min(count, 10); i++) fan.append(cardEl(null, { faceDown: true }));
 
     const tally = document.createElement('span');
     tally.className = 'player__count';
-    tally.textContent = dealing ? '' : count === 1 ? '1 card' : `${count} cards`;
+    tally.textContent = dealing && count === 0 ? '' : count === 1 ? '1 card' : `${count} cards`;
 
     panel.append(head, fan, tally);
     box.append(panel);
@@ -622,13 +648,18 @@ function renderSlots() {
 function renderHand() {
   const box = $('#my-hand');
   clear(box);
-  if (dealing) return; // the cards are still on their way
 
-  const live = !state.finished && !state.out[mySeat];
+  const live = !dealing && !state.finished && !state.out[mySeat];
   const attacks = live ? legalAttacks(state, mySeat) : [];
   const defending = live && mySeat === state.defender && !state.taking;
 
-  const hand = [...state.hands[mySeat]].sort(byTrumpThenRank);
+  // While dealing, only the cards that have actually landed. They are sliced in
+  // deal order and then sorted, so each one drops straight into its place
+  // rather than the hand reshuffling itself at the end.
+  const source = dealing
+    ? state.hands[mySeat].slice(0, dealt[mySeat] ?? 0)
+    : state.hands[mySeat];
+  const hand = [...source].sort(byTrumpThenRank);
 
   for (const card of hand) {
     const canAttack = attacks.some((c) => sameCard(c, card));
@@ -679,15 +710,23 @@ function byTrumpThenRank(a, b) {
   return SUITS.indexOf(a.s) - SUITS.indexOf(b.s);
 }
 
+const PROMPT_TONES = ['is-dealing', 'is-waiting', 'is-attacking', 'is-defending', 'is-throwing', 'is-over'];
+
 function renderPrompt() {
   const el = $('#prompt');
-  if (dealing) {
-    setText(el, 'Dealing…');
-    el.classList.remove('prompt--you');
-    return;
-  }
-  setText(el, describe(state, mySeat));
-  el.classList.toggle('prompt--you', canAct(state, mySeat) && !state.finished);
+  setText(el, dealing ? 'Dealing…' : describe(state, mySeat));
+  el.classList.remove(...PROMPT_TONES);
+  el.classList.add(promptTone());
+}
+
+/** Which of the prompt's looks fits what the table currently wants. */
+function promptTone() {
+  if (dealing) return 'is-dealing';
+  if (state.finished) return 'is-over';
+  if (!canAct(state, mySeat)) return 'is-waiting';
+  if (mySeat === state.defender) return 'is-defending';
+  if (mySeat === state.attacker && state.table.length === 0) return 'is-attacking';
+  return 'is-throwing';
 }
 
 function renderActions() {
@@ -699,6 +738,7 @@ function renderActions() {
   show(take, defending);
   take.disabled = !takeable;
   take.classList.toggle('btn--spent', defending && !takeable);
+  take.classList.toggle('btn--danger', takeable);
   take.title = takeable ? '' : 'Everything is beaten — you do not have to take.';
 
   show($('#act-pass'), live && canPass(state, mySeat));

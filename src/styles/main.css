@@ -3,9 +3,9 @@
    One typeface (Rubik) doing display and interface work at different weights. */
 
 :root {
-  --rail: #003003;
-  --rail-2: #151515;
-  --rail-line: #262626;
+  --rail: #0b2a1d;
+  --rail-2: #103826;
+  --rail-line: #1d4c37;
 
   --table: #146840;
   --table-deep: #0d4529;
@@ -13,6 +13,8 @@
 
   --red: #c8102e;
   --red-bright: #e34156;
+  --go: #f2f0ec;
+  --go-ink: #0d2c1e;
   --red-soft: #f0958f;
   --green-bright: #46c184;
 
@@ -26,7 +28,7 @@
   --ink: #121212;
   --chalk: #f2f0ec;
   --chalk-dim: #9aa8a0;
-  --chalk-rail: #8f8f8f;
+  --chalk-rail: #8fa89a;
 
   --step--1: 0.86rem;
   --step-0: 1rem;
@@ -54,7 +56,9 @@ html { -webkit-text-size-adjust: 100%; }
 body {
   margin: 0;
   min-height: 100svh;
-  background: var(--rail);
+  background:
+    radial-gradient(100% 80% at 50% 0%, #12402c 0%, var(--rail) 60%, #071e15 100%)
+    fixed;
   color: var(--chalk);
   font-family: Rubik, ui-sans-serif, system-ui, sans-serif;
   font-size: var(--step-0);
@@ -80,7 +84,7 @@ body {
   gap: var(--gap);
   padding: 0.9rem clamp(1rem, 4vw, 2.5rem);
   border-bottom: 1px solid var(--rail-line);
-  background: var(--rail);
+  background: rgba(0, 0, 0, 0.25);
 }
 
 .brand {
@@ -185,15 +189,27 @@ body {
 .btn:hover:not(:disabled) { border-color: var(--chalk-rail); }
 .btn:disabled { cursor: not-allowed; color: #5a5a5a; border-color: #222; }
 
+/* The ordinary "get on with it" button: bright, but not an alarm. */
 .btn--primary {
+  background: var(--go);
+  border-color: var(--go);
+  color: var(--go-ink);
+  font-weight: 700;
+}
+
+.btn--primary:hover:not(:disabled) { background: #fff; border-color: #fff; }
+.btn--primary:disabled { background: #45564d; border-color: #45564d; color: #8ba295; }
+
+/* Red means giving something up — taking the table, or walking out. */
+.btn--danger {
   background: var(--red);
   border-color: var(--red);
   color: #fff;
   font-weight: 700;
 }
 
-.btn--primary:hover:not(:disabled) { background: var(--red-bright); border-color: var(--red-bright); }
-.btn--primary:disabled { background: #4a1a20; border-color: #4a1a20; color: #9c8085; }
+.btn--danger:hover:not(:disabled) { background: var(--red-bright); border-color: var(--red-bright); }
+.btn--danger:disabled { background: #4a1a20; border-color: #4a1a20; color: #9c8085; }
 
 /* Shown but plainly no longer needed, so beating everything reads as a win
    rather than the option silently disappearing. */
@@ -224,7 +240,7 @@ body {
   width: 100%;
   padding: 0.6rem 0.75rem;
   color: var(--chalk);
-  background: #000;
+  background: rgba(0, 0, 0, 0.32);
   border: 1px solid var(--rail-line);
   border-radius: var(--radius);
 }
@@ -554,8 +570,48 @@ body {
 
 .felt__bottom { display: grid; gap: 0.8rem; justify-items: center; }
 
-.prompt { margin: 0; color: var(--chalk-dim); min-height: 1.55em; text-align: center; }
-.prompt--you { color: #fff; font-weight: 500; }
+/*
+  The prompt is the only thing telling you what the table wants from you, so it
+  is styled by situation rather than left as one grey line: waiting recedes,
+  your move stands out, and defending is marked in the defender's own colour.
+*/
+.prompt {
+  margin: 0;
+  min-height: 1.55em;
+  text-align: center;
+  padding: 0.4rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid transparent;
+  color: var(--chalk-dim);
+  transition: color 120ms ease, background-color 120ms ease, border-color 120ms ease;
+}
+
+.prompt.is-waiting { color: var(--chalk-dim); }
+
+.prompt.is-dealing { color: var(--chalk); letter-spacing: 0.04em; }
+
+.prompt.is-attacking {
+  color: #fff;
+  font-weight: 500;
+  background: rgba(200, 16, 46, 0.22);
+  border-color: var(--red);
+}
+
+.prompt.is-defending {
+  color: #fff;
+  font-weight: 500;
+  background: rgba(0, 0, 0, 0.45);
+  border-color: #000;
+}
+
+.prompt.is-throwing {
+  color: #fff;
+  font-weight: 500;
+  background: rgba(255, 255, 255, 0.12);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.prompt.is-over { color: #fff; font-weight: 500; }
 
 .fan { display: flex; justify-content: center; min-height: var(--card-h); }
 .fan .card { margin-inline: calc(var(--card-w) * -0.18); }
@@ -642,21 +698,10 @@ body {
 button.card { font-family: inherit; cursor: pointer; padding: calc(var(--card-w) * 0.09); }
 button.card:disabled { cursor: default; }
 
-button.card.is-playable:hover,
 button.card.is-playable:focus-visible {
   transform: translateY(-14px);
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.55);
   z-index: 2;
-}
-
-button.card--trump.is-playable:hover,
-button.card--trump.is-playable:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--ink), 0 10px 22px rgba(0, 0, 0, 0.55);
-}
-
-button.card--trump.card--red.is-playable:hover,
-button.card--trump.card--red.is-playable:focus-visible {
-  box-shadow: inset 0 0 0 2px var(--red), 0 10px 22px rgba(0, 0, 0, 0.55);
 }
 
 button.card.is-selected {
@@ -769,8 +814,30 @@ button.card.is-selected {
 
 /* ---------- small screens ---------- */
 
+/* Lifting a card on hover is a pointer idea. On a touch screen the raised card
+   just covers its neighbours, so it is limited to devices that can hover. */
+@media (hover: hover) {
+  button.card.is-playable:hover {
+    transform: translateY(-14px);
+    box-shadow: 0 10px 22px rgba(0, 0, 0, 0.55);
+    z-index: 2;
+  }
+}
+
 @media (max-width: 44rem) {
   .panel--auth { grid-template-columns: 1fr; }
+
+  /* Fan out into rows instead of overlapping, so tapping one card never hides
+     the ones beside it. */
+  .fan--mine {
+    flex-wrap: wrap;
+    gap: 4px;
+    justify-content: center;
+  }
+
+  .fan--mine .card { margin-inline: 0; }
+
+  button.card.is-selected { transform: translateY(-8px); }
   .nav { gap: 0.9rem; }
   .whoami { padding-left: 0.6rem; }
   .whoami__name { display: none; }

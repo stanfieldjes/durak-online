@@ -14,9 +14,6 @@ const STORAGE_KEY = 'durak:muted';
 
 const CLIPS = {
   play: { file: 'play_card.mp3', volume: 0.7 },
-  // Dealing fires this every 55ms, faster than the clip itself finishes, so it
-  // needs enough voices to overlap without cutting itself off.
-  draw: { file: 'draw_card.mp3', volume: 0.5, pool: 8 },
   gather: { file: 'pickup_or_discard.mp3', volume: 0.6 },
   start: { file: 'game_start.mp3', volume: 0.7 },
   win: { file: 'win.mp3', volume: 0.8 },
@@ -91,12 +88,6 @@ export function play(name) {
   } catch {
     /* ignore */
   }
-}
-
-/** Fire the same clip a few times, spaced out, for a run of drawn cards. */
-export function playRepeat(name, times, gapMs = 90) {
-  const count = Math.min(times, 6); // a whole table refilling should not rattle
-  for (let i = 0; i < count; i++) setTimeout(() => play(name), i * gapMs);
 }
 
 export function isMuted() {

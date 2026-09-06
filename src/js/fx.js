@@ -122,7 +122,7 @@ export function flyDraw(stockEl, target, count) {
  * Returns how long the whole thing takes, so the caller knows when the real
  * hands can be revealed. Returns 0 when there is nothing to animate.
  */
-export function flyDeal(stockEl, targets, rounds, { gap = 55, onCard } = {}) {
+export function flyDeal(stockEl, targets, rounds, { gap = 90, flight = 320 } = {}) {
   if (reducedMotion() || !stockEl || rounds <= 0) return 0;
   const from = stockEl.getBoundingClientRect();
   if (!from.width) return 0;
@@ -149,19 +149,18 @@ export function flyDeal(stockEl, targets, rounds, { gap = 55, onCard } = {}) {
       host.append(copy);
 
       animate(copy, end.x - start.x, end.y - start.y, {
-        duration: 300,
+        duration: flight,
         delay: index * gap,
         spin: 10,
         fade: 0.2,
         scale: 0.85,
       });
 
-      if (onCard) setTimeout(onCard, index * gap);
       index++;
     }
   }
 
-  return index === 0 ? 0 : (index - 1) * gap + 300;
+  return index === 0 ? 0 : (index - 1) * gap + flight;
 }
 
 export function clearEffects() {
