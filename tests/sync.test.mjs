@@ -16,8 +16,8 @@ import {
 } from '../src/js/durak.js';
 import {
   ratingChanges,
-  expectedScore,
-  actualScore,
+  expectedDurakChances,
+  actualDurakScore,
   START,
   K,
   FLOOR,
@@ -236,7 +236,7 @@ for (const n of [2, 3, 4]) {
 
 // Three and four players: losing costs much more than winning gains, because
 // the durak's loss is split among everyone who got out.
-for (const [n, expectedDurak, expectedSurvivor] of [[3, -20, 10], [4, -21, 7]]) {
+for (const [n, expectedDurak, expectedSurvivor] of [[3, -26, 13], [4, -30, 10]]) {
   const deltas = ratingChanges(Array(n).fill(START), 0);
   check(`${n}p: the durak loses ${-expectedDurak}`, deltas[0] === expectedDurak);
   check(`${n}p: each survivor gains ${expectedSurvivor}`,
@@ -277,42 +277,108 @@ check('a rating never drops below the floor',
   check('a player who always loses ends far below start', rating < 300 && rating >= FLOOR);
 }
 
-// Someone who is never the durak climbs to a ceiling and stops, because
-// survivors at a four-player table share a single score that no rating can
-// outrun.
+// Someone who is never the durak climbs a long way, but the climb slows as it
+// goes: a rating that high is barely expected to lose, so surviving stops
+// being worth much.
 {
   let rating = START;
-  for (let i = 0; i < 2000; i++) {
+  for (let i = 0; i < 4000; i++) {
     rating += ratingChanges([rating, START, START, START], 1)[0];
   }
-  check('a player who never loses settles near the ceiling',
-    rating > 530 && rating < 590);
+  check('a player who never loses settles far above start',
+    rating > 700 && rating < 900);
 }
 
-// Realistic rates land either side of the starting rating.
+// A rating settles where its expected durak chance matches its real one, so a
+// 25% rate at a four-player table should land back on the starting rating.
+//
+// Outcomes are spaced out evenly rather than run in blocks. Blocking every
+// loss together and then every win produces a large oscillation whose end
+// point depends on where the cycle stopped, not on where the rating actually
+// settles — and the tail is averaged for the same reason.
 {
   const settle = (rate) => {
     let rating = START;
-    for (let i = 0; i < 6000; i++) {
-      const durak = i % 10 < rate ? 0 : 1;
-      rating = Math.max(FLOOR, rating + ratingChanges([rating, START, START, START], durak)[0]);
+    let total = 0;
+    let counted = 0;
+    let accumulator = 0;
+    for (let i = 0; i < 20000; i++) {
+      accumulator += rate;
+      let isDurak = false;
+      if (accumulator >= 1) {
+        isDurak = true;
+        accumulator -= 1;
+      }
+      rating = Math.max(
+        FLOOR,
+        rating + ratingChanges([rating, START, START, START], isDurak ? 0 : 1)[0]
+      );
+      if (i >= 15000) {
+        total += rating;
+        counted++;
+      }
     }
-    return rating;
+    return total / counted;
   };
-  const bad = settle(4);    // durak 40% of the time
-  const good = settle(1);   // durak 10% of the time
-  check('a 40% durak rate settles below start', bad > 440 && bad < START);
-  check('a 10% durak rate settles above start', good > START && good < 590);
-  check('the two are clearly apart', good - bad > 40);
+
+  const even = settle(0.25);  // exactly the level rate for four players
+  const bad = settle(0.40);
+  const good = settle(0.10);
+
+  check('a 25% durak rate at a 4p table settles back on the starting rating',
+    Math.abs(even - START) < 25);
+  check('a 40% durak rate settles below start', bad < START - 30);
+  check('a 10% durak rate settles above start', good > START + 60);
+  check('the two are clearly apart', good - bad > 100);
 }
 
-// Scores on both sides sum to n/2, which is why the pool balances.
+// Both sides of the comparison sum to exactly 1 — one durak per game, and the
+// expected chances of being it partition the table. That identity is the whole
+// reason the pool stays zero sum.
 for (const n of [2, 3, 4]) {
   const ratings = Array.from({ length: n }, (_, i) => 460 + i * 30);
-  const expectedTotal = sum(ratings.map((_, s) => expectedScore(ratings, s)));
-  const actualTotal = sum(ratings.map((_, s) => actualScore(n, s, 0)));
-  check(`${n}p: expected scores sum to n/2`, Math.abs(expectedTotal - n / 2) < 1e-9);
-  check(`${n}p: actual scores sum to n/2`, Math.abs(actualTotal - n / 2) < 1e-9);
+  const chanceTotal = sum(expectedDurakChances(ratings));
+  const actualTotal = sum(ratings.map((_, s) => actualDurakScore(n, s, 0)));
+  const drawTotal = sum(ratings.map((_, s) => actualDurakScore(n, s, -1)));
+  check(`${n}p: expected durak chances sum to 1`, Math.abs(chanceTotal - 1) < 1e-9);
+  check(`${n}p: exactly one durak`, Math.abs(actualTotal - 1) < 1e-9);
+  check(`${n}p: a draw still spreads one durak's worth of blame`,
+    Math.abs(drawTotal - 1) < 1e-9);
+}
+
+// Lobby size scaling: the same result costs more at a bigger table, because
+// the chance of being the durak there was smaller to begin with.
+{
+  const durakAt = (n) => ratingChanges(Array(n).fill(START), 0)[0];
+  const winAt = (n) => ratingChanges(Array(n).fill(START), 0)[1];
+
+  check('2p durak loses 20', durakAt(2) === -20);
+  check('3p durak loses more than 2p', durakAt(3) < durakAt(2));
+  check('4p durak loses more than 3p', durakAt(4) < durakAt(3));
+
+  check('2p winner gains 20', winAt(2) === 20);
+  check('3p survivor gains less than a 2p winner', winAt(3) < winAt(2));
+  check('4p survivor gains less than a 3p survivor', winAt(4) < winAt(3));
+
+  // The expected durak chance at a level table is exactly 1/n, so the loss is
+  // K*(1 - 1/n): 20, 26.7, 30 for two, three and four players.
+  check('the 4p loss matches K*(1 - 1/4)', durakAt(4) === -30);
+  for (const n of [2, 3, 4]) {
+    const deltas = ratingChanges(Array(n).fill(START), 0);
+    check(`${n}p: level-table changes still sum to zero`, sum(deltas) === 0);
+  }
+}
+
+// An unlikely durak is punished hardest: a strong player at a table of weaker
+// ones was barely expected to lose, so losing costs more than it would at a
+// level table of the same size.
+{
+  const strongLoses = ratingChanges([700, 500, 500, 500], 0)[0];
+  const levelLoses = ratingChanges([500, 500, 500, 500], 0)[0];
+  check('a favourite being the durak costs more than a level-table loss',
+    strongLoses < levelLoses);
+  check('a favourite beating weak players gains almost nothing',
+    ratingChanges([700, 500, 500, 500], 1)[0] <= 2);
 }
 
 if (failures) {
