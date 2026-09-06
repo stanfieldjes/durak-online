@@ -5,7 +5,6 @@ import {
   canPass,
   canTake,
   canAct,
-  seatsToAct,
   describe,
   roleOf,
   sameCard,
@@ -16,6 +15,7 @@ import {
 } from './durak.js';
 import {
   getGame,
+  getProfile,
   submitMove,
   finishGame,
   abandonGame,
@@ -31,6 +31,7 @@ import { formatRatingDelta, formatRating } from './elo.js';
 import { $, show, setText, clear, toast, cardEl } from './ui.js';
 
 const MAX_RETRIES = 3;
+const CLEAR_MS = 420;
 
 let game = null;      // the games row, with seats sorted by seat number
 let state = null;     // the position
@@ -39,6 +40,10 @@ let selected = null;  // card chosen from hand while defending
 let unwatch = null;
 let busy = false;
 let settling = false;
+let resultShown = false;
+
+const reducedMotion = () =>
+  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 
 export function initGame() {
   $('#act-take').addEventListener('click', () => play({ type: 'take' }));
@@ -95,13 +100,11 @@ export async function enterGame(gameId) {
       game = { ...game, ...event.row };
     }
     if (mySeat === null) mySeat = seatOf(session.user.id);
-    state = game.state;
-    render();
+    await moveTo(game.state);
     await maybeSettle();
   });
 
-  state = game.state;
-  render();
+  await moveTo(game.state);
   await maybeSettle();
 }
 
@@ -119,6 +122,7 @@ function reset() {
   selected = null;
   busy = false;
   settling = false;
+  resultShown = false;
   show($('#result'), false);
   show($('#waiting'), false);
   show($('#felt'), false);
@@ -134,6 +138,66 @@ function profileAt(seat) {
 }
 
 /* ------------------------------------------------------------------ */
+/* state transitions and animation                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Adopt a new position, playing the round-end animation first if one is due.
+ *
+ * The cards leaving the table are the only moment in Durak where a pile of
+ * cards moves somewhere, so it is worth showing rather than snapping.
+ */
+async function moveTo(next) {
+  const previous = state;
+  const ending = roundEnding(previous, next);
+
+  if (ending && previous?.table?.length && !reducedMotion()) {
+    await animateTableClear(ending);
+  }
+
+  state = next;
+  render();
+}
+
+/** The 'beaten' or 'taken' entry appended since the last position, if any. */
+function roundEnding(previous, next) {
+  if (!previous?.log || !next?.log) return null;
+  const fresh = next.log.slice(previous.log.length);
+  return fresh.find((e) => e.t === 'beaten' || e.t === 'taken') ?? null;
+}
+
+/** Where the cards should fly to. */
+function destinationFor(ending) {
+  if (ending.t === 'beaten') return $('#discard');
+  if (ending.seat === mySeat) return $('#my-hand');
+  return document.querySelector(`.player[data-seat="${ending.seat}"]`);
+}
+
+function animateTableClear(ending) {
+  const slots = [...document.querySelectorAll('#slots .slot')];
+  if (slots.length === 0) return Promise.resolve();
+
+  const target = destinationFor(ending);
+  const targetBox = target?.getBoundingClientRect();
+
+  slots.forEach((slot, i) => {
+    const box = slot.getBoundingClientRect();
+    let dx = 0;
+    let dy = ending.t === 'beaten' ? -140 : 140;
+    if (targetBox && targetBox.width) {
+      dx = targetBox.left + targetBox.width / 2 - (box.left + box.width / 2);
+      dy = targetBox.top + targetBox.height / 2 - (box.top + box.height / 2);
+    }
+    slot.style.setProperty('--dx', `${Math.round(dx)}px`);
+    slot.style.setProperty('--dy', `${Math.round(dy)}px`);
+    slot.style.setProperty('--delay', `${i * 40}ms`);
+    slot.classList.add(ending.t === 'beaten' ? 'slot--discarding' : 'slot--collected');
+  });
+
+  return new Promise((resolve) => setTimeout(resolve, CLEAR_MS));
+}
+
+/* ------------------------------------------------------------------ */
 /* moves                                                               */
 /* ------------------------------------------------------------------ */
 
@@ -143,8 +207,7 @@ function profileAt(seat) {
  * Attacking is free-for-all, so another player may have moved between our read
  * and our write. The database rejects that write rather than letting one of the
  * two cards vanish, and we replay the move against the fresh position. If the
- * move stopped being legal in the meantime — someone took the last slot — we
- * say so instead of forcing it through.
+ * move stopped being legal in the meantime, we say so instead of forcing it.
  */
 async function play(move) {
   if (busy || !state || state.finished) return;
@@ -164,17 +227,13 @@ async function play(move) {
       try {
         next = applyMove(base, mySeat, move);
       } catch (error) {
-        if (attempt > 0) {
-          toast('Someone else moved first — that is no longer available.');
-        } else {
-          toast(error instanceof IllegalMove ? error.message : 'That move is not allowed.');
-        }
+        if (attempt > 0) toast('Someone else moved first — that is no longer available.');
+        else toast(error instanceof IllegalMove ? error.message : 'That move is not allowed.');
         state = base;
         return;
       }
 
-      state = next; // optimistic, so the card leaves your hand immediately
-      render();
+      await moveTo(next); // optimistic, so the table responds immediately
 
       try {
         const row = await submitMove(game.id, next, base.version);
@@ -206,22 +265,23 @@ async function play(move) {
 
 /** Once the engine says the game is over, ask the database to settle ratings. */
 async function maybeSettle() {
-  if (!state?.finished || settling) return;
+  if (!state?.finished) return;
+
   if (game.status === 'finished') {
-    showResult();
+    await showResult();
     return;
   }
+  if (settling) return;
+
   settling = true;
   try {
     await finishGame(game.id, state.draw ? -1 : state.durak);
   } catch (error) {
     // Every client reports; whoever loses the race gets a harmless error.
-    if (!/not in progress|already/i.test(error?.message ?? '')) {
-      console.warn(error);
-    }
+    if (!/not in progress|already/i.test(error?.message ?? '')) console.warn(error);
   }
   game = (await getGame(game.id)) ?? game;
-  if (game.status === 'finished') showResult();
+  if (game.status === 'finished') await showResult();
   else settling = false;
 }
 
@@ -249,12 +309,11 @@ async function onLeaveWaiting() {
 }
 
 async function onCopyLink() {
-  const url = location.href;
   try {
-    await navigator.clipboard.writeText(url);
+    await navigator.clipboard.writeText(location.href);
     toast('Link copied. Send it to whoever you intend to beat.');
   } catch {
-    toast(url);
+    toast(location.href);
   }
 }
 
@@ -262,11 +321,9 @@ async function onStartNow(event) {
   const btn = event.currentTarget;
   btn.disabled = true;
   try {
-    const count = game.players.length;
-    await startGame(game.id, newGame(Number(game.seed), count));
+    await startGame(game.id, newGame(Number(game.seed), game.players.length));
     game = (await getGame(game.id)) ?? game;
-    state = game.state;
-    render();
+    await moveTo(game.state);
   } catch (error) {
     toast(readableError(error));
   } finally {
@@ -338,6 +395,7 @@ function renderOpponents() {
     const profile = profileAt(seat);
     const panel = document.createElement('div');
     panel.className = 'player';
+    panel.dataset.seat = String(seat);
     if (seat === state.defender) panel.classList.add('player--defending');
     if (seat === state.attacker) panel.classList.add('player--attacking');
     if (state.out[seat]) panel.classList.add('player--out');
@@ -359,7 +417,7 @@ function renderOpponents() {
     role.textContent = state.out[seat]
       ? 'out'
       : state.passed[seat] && seat !== state.defender
-        ? 'passed'
+        ? 'done'
         : roleOf(state, seat);
 
     head.append(name, rating, role);
@@ -379,14 +437,19 @@ function renderOpponents() {
 }
 
 function renderStock() {
+  // The trump card sits face up beside the stock for the whole game, so the
+  // suit is never something anyone has to remember.
   const trumpBox = $('#trump-card');
   clear(trumpBox);
-  if (state.deck.length > 0) trumpBox.append(cardEl(state.trumpCard, { trump: state.trump }));
+  const trumpCard = cardEl(state.trumpCard, { trump: state.trump });
+  if (state.deck.length === 0) trumpCard.classList.add('card--drawn');
+  trumpBox.append(trumpCard);
 
   const pile = $('#deck-pile');
   pile.dataset.empty = String(state.deck.length === 0);
   setText($('#deck-count'), String(state.deck.length));
   setText($('#trump-label'), `Trump ${SUIT_GLYPH[state.trump]}`);
+  $('#trump-label').classList.toggle('is-red', state.trump === 'H' || state.trump === 'D');
 
   show($('#discard'), state.discard > 0);
   setText($('#discard-count'), String(state.discard));
@@ -444,6 +507,9 @@ function renderHand() {
 
     const el = cardEl(card, { interactive: true, trump: state.trump });
     el.disabled = !playable;
+    // Unplayable cards are darkened rather than faded, because the hand
+    // overlaps and stacked transparency reads as mud.
+    el.classList.toggle('card--dim', !playable);
     el.classList.toggle('is-playable', playable);
     el.classList.toggle('is-selected', Boolean(selected && sameCard(selected, card)));
 
@@ -483,8 +549,26 @@ function renderActions() {
   show($('#act-pass'), live && canPass(state, mySeat));
 }
 
-function showResult() {
-  const box = $('#result');
+/**
+ * Draw the final scores.
+ *
+ * Safe to call more than once: it reads ratings from the server rather than
+ * adjusting anything in place, so a repeated call cannot double the numbers.
+ */
+async function showResult() {
+  if (resultShown) return;
+  resultShown = true;
+
+  // Always re-read the row. Realtime payloads carry no joined columns, so the
+  // profiles attached to `game` may be whatever was loaded when the table
+  // opened. Re-reading guarantees the ratings below are the settled ones.
+  try {
+    const fresh = await getGame(game.id);
+    if (fresh) game = fresh;
+  } catch {
+    /* fall back to what we already have */
+  }
+
   const deltas = game.rating_delta ?? {};
   const mine = deltas[session.user.id];
   const numeric = mine === undefined || mine === null ? null : Number(mine);
@@ -497,33 +581,41 @@ function showResult() {
   setText($('#result-title'), title);
   setText($('#result-elo'), numeric === null ? '' : `${formatRatingDelta(numeric)} rating`);
 
+  // finish_game() has already written these ratings, so they are final. The
+  // delta is shown beside them for context, NOT added to them — doing both is
+  // what made the scoreboard read double the points that were actually moved.
   const list = $('#result-table');
   clear(list);
   for (const seatRow of game.players ?? []) {
-    const profile = seatRow.profile;
     const d = deltas[seatRow.player_id];
     const value = d === undefined || d === null ? null : Number(d);
+    const settled = Number(seatRow.profile?.rating ?? 0);
 
     const li = document.createElement('li');
     if (game.durak_id === seatRow.player_id) li.classList.add('is-durak');
 
     const name = document.createElement('span');
-    name.textContent = profile?.username ?? `Seat ${seatRow.seat + 1}`;
+    name.textContent = seatRow.profile?.username ?? `Seat ${seatRow.seat + 1}`;
 
     const change = document.createElement('span');
     change.className = value === null ? '' : value >= 0 ? 'delta--up' : 'delta--down';
-    change.textContent = value === null
-      ? '—'
-      : `${formatRating((profile?.rating ?? 0) + value)}  (${formatRatingDelta(value)})`;
+    change.textContent =
+      value === null ? '—' : `${formatRating(settled)}  (${formatRatingDelta(value)})`;
 
     li.append(name, change);
     list.append(li);
   }
 
-  if (session.profile && numeric !== null) {
-    session.profile.rating = Number(session.profile.rating) + numeric;
-    setText($('#whoami-elo'), formatRating(session.profile.rating));
+  // Refresh the header from the database rather than adding the delta locally.
+  try {
+    const fresh = await getProfile(session.user.id);
+    if (fresh) {
+      session.profile = fresh;
+      setText($('#whoami-elo'), formatRating(fresh.rating));
+    }
+  } catch {
+    /* the header just keeps the old number */
   }
 
-  show(box, true);
+  show($('#result'), true);
 }

@@ -56,6 +56,22 @@ function auditInvariants(state, where) {
   if (!state.finished && (state.out[state.attacker] || state.out[state.defender])) {
     fail(`${where}: an eliminated player holds a role`);
   }
+  // Nobody should ever be asked to act in a round whose result is already
+  // settled: stock empty, every attacker spent, defender holding more than
+  // they could ever shed. That position must end the game instead.
+  if (!state.finished && state.deck.length === 0) {
+    const others = [];
+    for (let s = 0; s < state.playerCount; s++) {
+      if (s !== state.defender && !state.out[s]) others.push(s);
+    }
+    const spent = others.length > 0 && others.every((s) => state.hands[s].length === 0);
+    const open = state.table.filter((x) => !x.def).length;
+    if (spent && state.hands[state.defender].length > open) {
+      fail(`${where}: game should have ended — defender holds ` +
+        `${state.hands[state.defender].length} with ${open} attacks open and every attacker spent`);
+    }
+  }
+
   // A player is only out once the stock is empty and their hand is gone.
   state.out.forEach((isOut, seat) => {
     if (isOut && state.hands[seat].length > 0) {
@@ -232,6 +248,47 @@ for (const players of [3, 4]) {
       );
     }
   }
+}
+
+/* ---- forced endings and the draw that survives them ------------------- */
+
+console.log('Checking forced endings...');
+{
+  let forced = 0;
+  let draws = 0;
+  for (const players of [2, 3, 4]) {
+    for (let g = 0; g < 800; g++) {
+      const rng = makeRng(g * 31 + players);
+      let state = newGame(g, players);
+      let guard = 0;
+      while (!state.finished && guard++ < 5000) {
+        const actors = seatsToAct(state);
+        if (!actors.length) break;
+        const seat = actors[Math.floor(rng() * actors.length)];
+        const moves = availableMoves(state, seat);
+        state = applyMove(state, seat, moves[Math.floor(rng() * moves.length)]);
+      }
+      if (!state.finished) continue;
+
+      const end = state.log[state.log.length - 1];
+      if (end?.forced) {
+        forced++;
+        check(`${players}p game ${g}: a forced ending names the defender`,
+          state.durak === end.durak && !state.draw);
+        check(`${players}p game ${g}: the durak still holds cards`,
+          state.hands[state.durak].length > 0);
+      }
+      if (state.draw) {
+        draws++;
+        check(`${players}p game ${g}: a draw leaves nobody holding cards`,
+          state.hands.every((h) => h.length === 0));
+      }
+    }
+  }
+  console.log(`  ${forced} games ended early with no decision left to make`);
+  console.log(`  ${draws} games still reached a draw, so the tie is not shortcut away`);
+  check('forced endings actually happen', forced > 0);
+  check('draws are still reachable', draws > 0);
 }
 
 /* ---- beat rule -------------------------------------------------------- */

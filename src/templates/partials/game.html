@@ -12,13 +12,17 @@
   </div>
 
   <div class="felt" id="felt" hidden>
+    <div class="felt__bar">
+      <span class="felt__trump" id="trump-label"></span>
+      <button type="button" class="btn btn--quiet btn--corner" id="act-leave">Leave</button>
+    </div>
+
     <div class="opponents" id="opponents"></div>
 
     <div class="felt__middle">
       <div class="stock" id="stock">
-        <div class="stock__trump" id="trump-card"></div>
         <div class="stock__pile" id="deck-pile"><span id="deck-count">0</span></div>
-        <span class="stock__label" id="trump-label"></span>
+        <div class="stock__trump" id="trump-card"></div>
       </div>
 
       <div class="slots" id="slots" aria-label="Cards in play"></div>
@@ -31,8 +35,7 @@
       <div class="fan fan--mine" id="my-hand" aria-label="Your cards"></div>
       <div class="actions">
         <button type="button" class="btn btn--primary" id="act-take" hidden>Take the cards</button>
-        <button type="button" class="btn btn--primary" id="act-pass" hidden>Pass</button>
-        <button type="button" class="btn btn--quiet" id="act-leave">Leave</button>
+        <button type="button" class="btn btn--primary" id="act-pass" hidden>Done for this round</button>
       </div>
     </div>
   </div>

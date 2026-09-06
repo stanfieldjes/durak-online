@@ -258,8 +258,11 @@ function removeFromHand(hand, card) {
 
 /**
  * A card landing on the table gives every attacker a fresh chance to throw in.
- * Anyone with nothing legal to add is passed automatically, so a round never
- * stalls waiting on players who cannot do anything.
+ *
+ * Attackers are NOT passed automatically just because they hold no matching
+ * rank: a round ends when the attackers say it ends, not when the engine
+ * decides for them. The one exception is a player with an empty hand, who has
+ * nothing to decide.
  */
 function refreshPasses(state) {
   for (let seat = 0; seat < state.playerCount; seat++) {
@@ -267,7 +270,7 @@ function refreshPasses(state) {
       state.passed[seat] = true;
       continue;
     }
-    state.passed[seat] = legalAttacks(state, seat).length === 0;
+    state.passed[seat] = state.hands[seat].length === 0;
   }
 }
 
@@ -330,8 +333,46 @@ export function applyMove(prev, seat, move) {
       throw new IllegalMove('Unknown move.');
   }
 
-  state = maybeEndRound(state);
+  state = maybeForcedEnd(state);
+  if (!state.finished) state = maybeEndRound(state);
   state.version = prev.version + 1;
+  return state;
+}
+
+/**
+ * Stop a round that cannot change the result.
+ *
+ * Once the stock is empty and every attacker has played their last card, the
+ * defender is the only player left holding anything. Beating an attack sheds
+ * exactly one card, so the defender can only finish empty if their hand is
+ * already down to the number of open attacks. Holding more than that, no line
+ * of play saves them and there is nothing to ask about — they are the durak.
+ *
+ * Holding exactly that many, the round plays on, because beating everything
+ * empties their hand too and the game is a draw.
+ */
+function maybeForcedEnd(state) {
+  if (state.finished || state.deck.length > 0) return state;
+
+  const defender = state.defender;
+  const others = [];
+  for (let seat = 0; seat < state.playerCount; seat++) {
+    if (seat !== defender && !state.out[seat]) others.push(seat);
+  }
+  if (others.length === 0) return state;
+  if (!others.every((seat) => state.hands[seat].length === 0)) return state;
+  if (state.hands[defender].length <= openSlots(state)) return state;
+
+  for (const seat of others) {
+    state.out[seat] = true;
+    state.log.push({ t: 'out', seat });
+  }
+  state.finished = true;
+  state.draw = false;
+  state.durak = defender;
+  state.taking = false;
+  state.passed = Array(state.playerCount).fill(true);
+  state.log.push({ t: 'end', durak: defender, draw: false, forced: true });
   return state;
 }
 
