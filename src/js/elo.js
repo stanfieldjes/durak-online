@@ -2,32 +2,34 @@
  * Rating model. Pure, so tests can hold it against the SQL in
  * supabase/schema.sql — the database is what actually applies ratings.
  *
- * Durak has exactly one loser: the durak. Everyone else got out. That maps
- * onto a rating where losing hurts and winning is a modest bonus, because the
- * points the durak drops are split among all the survivors.
+ * Durak has exactly one loser per game, so the rating scores one thing: how
+ * likely each player was to end up as that loser. Actual outcome is 1 for the
+ * durak and 0 for everyone else; expected is the chance the ratings gave them
+ * of being the durak. At a table of n equally rated players that chance is
+ * exactly 1/n, which is where the lobby-size scaling comes from:
  *
- *   4 players, all rated equally:  durak −21,  each survivor +7
- *   3 players, all rated equally:  durak −20,  each survivor +10
- *   2 players, all rated equally:  durak −20,  the winner   +20
+ *   2 players:  1/2 expected  ->  durak −20,  the winner   +20
+ *   3 players:  1/3 expected  ->  durak −27,  each survivor +13
+ *   4 players:  1/4 expected  ->  durak −30,  each survivor +10
+ *
+ * Being the durak at a 4-player table is a worse result than at a 2-player
+ * table, because you only had a 25% chance of it rather than 50%, so it costs
+ * more. The survivors' side falls out of the same arithmetic: the durak's loss
+ * is split among more people, so each individual gain is smaller.
+ *
+ * Both sides always sum to zero — the durak's expected chance and everyone
+ * else's add up to 1 by construction, so no points are created or destroyed.
  *
  * Ratings and changes are whole numbers. Rounding each share separately would
  * not add back up, so the survivors take clean numbers and the durak absorbs
  * whatever is left over — which suits a game whose whole point is that one
  * player carries the loss.
  *
- * The scale is asymmetric in the same direction. At a 4-player table, being
- * the durak a quarter of the time settles you at exactly 500. Dropping to 40%
- * costs about 35 points; improving to 10% gains about 35.
- *
  * K and SCALE pull against each other. K is how much a game is worth; SCALE is
  * how quickly a rating gap turns into a lopsided expectation. Raising K makes
  * results move faster but adds noise; lowering SCALE makes gaps matter more
  * per game but squeezes the ladder into a narrower band, so large gaps stop
  * occurring at all. See README, "Rating".
- *
- * With two players there is one loser and one winner, so anything the loser
- * drops the winner must pick up. Asymmetry there is only possible by destroying
- * points, which is what LOSS_BIAS does — see README, "Rating".
  */
 
 export const START = 500;   // everyone opens here
@@ -50,27 +52,38 @@ export function expectedPair(rating, opponent) {
 }
 
 /**
- * Expected score for one seat: how many of the others it should outlast,
- * as a fraction. Averaged pairwise, which is the usual multiplayer extension.
+ * Each seat's expected chance of being the durak, given the ratings at the
+ * table. Returns one probability per seat, summing to exactly 1.
+ *
+ * A weaker player is likelier to be left holding cards, so weight each seat by
+ * 10^(−rating / SCALE) and normalise. The weights are taken relative to the
+ * strongest rating at the table rather than in absolute terms, which keeps the
+ * exponent small and avoids overflow at extreme ratings while giving
+ * identical ratios.
+ *
+ * At two players this reduces exactly to the usual logistic pairing, so
+ * heads-up results are unchanged from the previous model.
  */
-export function expectedScore(ratings, seat) {
+export function expectedDurakChances(ratings) {
   const n = ratings.length;
-  if (n < 2) return 0.5;
-  let total = 0;
-  for (let j = 0; j < n; j++) {
-    if (j !== seat) total += expectedPair(ratings[seat], ratings[j]);
-  }
-  return total / (n - 1);
+  if (n === 0) return [];
+  if (n === 1) return [1];
+
+  const strongest = Math.max(...ratings);
+  const weights = ratings.map((r) => Math.pow(10, (strongest - r) / SCALE));
+  const total = weights.reduce((a, b) => a + b, 0);
+  return weights.map((w) => w / total);
 }
 
 /**
- * Actual score. The durak outlasted nobody. Everyone else outlasted the durak
- * and drew with each other, which is worth (1 + 0.5(n−2)) / (n−1).
+ * What actually happened, on the same scale: 1 for the durak, 0 for everyone
+ * else. A draw is nobody's fault, so the blame is spread evenly and each seat
+ * carries 1/n — which cancels exactly against expectation when ratings are
+ * level, and otherwise nudges toward whoever was expected to lose.
  */
-export function actualScore(n, seat, durakSeat) {
-  if (durakSeat === -1 || durakSeat === null) return 0.5; // nobody was the fool
-  if (seat === durakSeat) return 0;
-  return (1 + 0.5 * (n - 2)) / (n - 1);
+export function actualDurakScore(n, seat, durakSeat) {
+  if (durakSeat === -1 || durakSeat === null) return 1 / n;
+  return seat === durakSeat ? 1 : 0;
 }
 
 /** Half away from zero, matching Postgres `round()` on numerics. */
@@ -111,12 +124,15 @@ function balanceResidual(deltas, raw) {
  */
 export function ratingChanges(ratings, durakSeat, lossBias = LOSS_BIAS) {
   const n = ratings.length;
+  const chances = expectedDurakChances(ratings);
   const raw = [];
 
   for (let seat = 0; seat < n; seat++) {
-    const expected = expectedScore(ratings, seat);
-    const actual = actualScore(n, seat, durakSeat);
-    let delta = K * (actual - expected);
+    const expected = chances[seat];
+    const actual = actualDurakScore(n, seat, durakSeat);
+    // Being the durak scores 1 against an expectation below 1, so the sign
+    // comes out negative for them and positive for everyone else.
+    let delta = K * (expected - actual);
     if (seat === durakSeat && delta < 0) delta *= lossBias;
     raw.push(delta);
   }

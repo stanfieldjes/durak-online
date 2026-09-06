@@ -42,7 +42,7 @@ import {
   DRAW_FLIGHT_MS,
   DRAW_STAGGER_MS,
 } from './fx.js';
-import { play as playSound, isMuted, toggleMuted } from './sound.js';
+import { play as playSound, isMuted, toggleMuted, setSoundActive } from './sound.js';
 import { $, show, setText, clear, toast, cardEl } from './ui.js';
 
 /** How long the finished table stays on screen before the scores appear. */
@@ -120,6 +120,7 @@ export function initGame() {
 
 export async function enterGame(gameId) {
   reset();
+  setSoundActive(true);
 
   try {
     game = await getGame(gameId);
@@ -170,6 +171,7 @@ export async function enterGame(gameId) {
 }
 
 export function leaveGame() {
+  setSoundActive(false);
   if (unwatch) unwatch();
   reset();
 }

@@ -374,6 +374,9 @@ declare
   ids        uuid[];
   ratings    int[];
   raw        numeric[];
+  weights    numeric[];
+  weight_total numeric;
+  strongest  int;
   deltas     int[];
   expected   numeric;
   actual     numeric;
@@ -439,27 +442,39 @@ begin
   end if;
   perform 1 from profiles where id = any(ids) for update;
 
-  raw    := array_fill(0::numeric, array[n]);
-  deltas := array_fill(0, array[n]);
+  raw     := array_fill(0::numeric, array[n]);
+  deltas  := array_fill(0, array[n]);
+  weights := array_fill(0::numeric, array[n]);
+
+  -- Each seat's expected chance of being the durak, mirroring
+  -- expectedDurakChances() in src/js/elo.js: weight each seat by
+  -- 10^(-rating / scale) and normalise so the chances sum to 1. Weights are
+  -- taken relative to the strongest rating to keep the exponent small.
+  strongest := ratings[1];
+  for i in 2..n loop
+    if ratings[i] > strongest then strongest := ratings[i]; end if;
+  end loop;
+
+  weight_total := 0;
+  for i in 1..n loop
+    weights[i] := power(10.0, (strongest - ratings[i]) / scale);
+    weight_total := weight_total + weights[i];
+  end loop;
 
   for i in 1..n loop
-    expected := 0;
-    for j in 1..n loop
-      if i <> j then
-        expected := expected + 1.0 / (1.0 + power(10.0, (ratings[j] - ratings[i]) / scale));
-      end if;
-    end loop;
-    expected := expected / (n - 1);
+    expected := weights[i] / weight_total;
 
+    -- What actually happened: 1 for the durak, 0 for everyone else. A draw
+    -- spreads the blame evenly at 1/n.
     if p_durak_seat = -1 then
-      actual := 0.5;
+      actual := 1.0 / n;
     elsif seats[i] = p_durak_seat then
-      actual := 0;
+      actual := 1;
     else
-      actual := (1 + 0.5 * (n - 2)) / (n - 1);
+      actual := 0;
     end if;
 
-    raw[i] := k * (actual - expected);
+    raw[i] := k * (expected - actual);
     if seats[i] = p_durak_seat and raw[i] < 0 then
       raw[i] := raw[i] * loss_bias;
     end if;

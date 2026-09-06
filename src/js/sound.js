@@ -23,6 +23,7 @@ const CLIPS = {
 
 const pools = new Map();
 let unlocked = false;
+let active = false; // only true while a table is on screen
 let muted = readMuted();
 
 function readMuted() {
@@ -58,15 +59,20 @@ function unlock() {
     for (const audio of voices) {
       const volume = audio.volume;
       audio.volume = 0;
-      audio.play()
-        .then(() => {
+      const settle = () => {
+        // Pause on BOTH paths. A rejected play() does not reliably mean
+        // nothing started — some browsers begin playback and reject
+        // afterwards, and restoring the volume without pausing first turns
+        // that silent priming clip into an audible one.
+        try {
           audio.pause();
           audio.currentTime = 0;
-          audio.volume = volume;
-        })
-        .catch(() => {
-          audio.volume = volume; // still fine; it will load on first real play
-        });
+        } catch {
+          /* nothing to stop */
+        }
+        audio.volume = volume;
+      };
+      audio.play().then(settle).catch(settle);
     }
   }
 }
@@ -78,8 +84,20 @@ export function initSound() {
   }
 }
 
+/**
+ * Sound belongs to the table and nowhere else.
+ *
+ * The clips are primed on the first interaction anywhere in the app, which
+ * includes signing in, so priming alone must never be audible — but relying
+ * on that being perfectly silent is thin. This gate is the actual guarantee:
+ * outside a game nothing plays at all, whatever else goes wrong.
+ */
+export function setSoundActive(value) {
+  active = Boolean(value);
+}
+
 export function play(name) {
-  if (muted || !pools.has(name)) return;
+  if (!active || muted || !pools.has(name)) return;
   const pool = pools.get(name);
   const audio = pool.voices[pool.next];
   pool.next = (pool.next + 1) % pool.voices.length;

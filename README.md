@@ -103,18 +103,26 @@ every one either replayed cleanly or correctly abandoned.
 
 ## Rating
 
-Everyone starts at **500**. Durak has exactly one loser per game, so the rating
-is built around that: the durak drops points, and the survivors split them.
-Ratings and changes are always whole numbers.
+Everyone starts at **500**. Durak has exactly one loser per game, so the
+rating scores one thing: how likely each player was to end up as that loser.
+Actual outcome is 1 for the durak and 0 for everyone else; expected is the
+chance the ratings gave them of being the durak. At a table of n equally rated
+players that chance is exactly 1/n, which is where lobby-size scaling comes
+from:
 
-| Table | Durak | Each survivor |
-|-------|-------|---------------|
-| 4 players | −21 | +7 |
-| 3 players | −20 | +10 |
-| 2 players | −20 | +20 |
+| Table | Level durak chance | Durak | Each survivor |
+|-------|--------------------|-------|---------------|
+| 2 players | 50% | −20 | +20 |
+| 3 players | 33% | −26 | +13 |
+| 4 players | 25% | −30 | +10 |
 
-A rating gap damps the result, and on this base it damps it visibly. Heads-up,
-with the favourite winning:
+Being the durak at a four-player table costs more than at a two-player one,
+because you only had a 25% chance of it rather than 50%. The survivors' side
+falls out of the same arithmetic: the loss is split among more people, so each
+individual gain is smaller. Both sides always sum to zero, because the expected
+chances partition the table and there is exactly one durak.
+
+A rating gap shifts those chances. Heads-up, with the favourite winning:
 
 | Gap | Favourite gains |
 |-----|-----------------|
@@ -124,7 +132,9 @@ with the favourite winning:
 | 200 | +4 |
 
 An upset runs the other way: beating someone 200 points ahead of you is worth
-+36.
++36. The same applies at bigger tables — a strong player who ends up the durak
+among weaker ones was barely expected to lose, so it costs them more than a
+level-table loss would.
 
 Rounding each share separately would not add back up, so the survivors take
 clean numbers and the durak absorbs whatever is left over. That suits a game
@@ -132,53 +142,15 @@ whose whole point is that one player carries the loss.
 
 `K` and `SCALE` in `src/js/elo.js` pull against each other, and both must be
 changed in `finish_game()` at the same time. `K` is what a game is worth;
-`SCALE` is how fast a gap turns into a lopsided expectation. At K = 40 a game
-moves about 20 points while realistic ratings only span about 70, so results
-move fast and bounce around. Drop `K` to 20 if that feels too jumpy, or raise
-`SCALE` to spread the ladder wider at the cost of gaps mattering less.
-
-That is the "losing is punishing, winning is a small bonus" shape you wanted,
-and at 3 and 4 players it falls out for free: whatever the durak loses is shared
-among everyone else, so each individual gain is small.
-
-**Two-player games are the exception, and it is a mathematical one.** With one
-loser and one winner, every point the loser drops is a point the winner picks
-up. Making the loss bigger than the gain means destroying points, which drags
-the whole pool's average down over time. `LOSS_BIAS` in `src/js/elo.js` and
-`loss_bias` in `finish_game()` are the dial for that if you want it; both
-default to 1, which keeps the pool balanced. Set them to 1.5 and the durak drops
-7.5 while the winner still gains 5, at the cost of steady deflation.
-
-The scale leans the same way you do. At a four-player table, being the durak a
-quarter of the time — the average share — settles you at exactly 100. Getting
-worse than that costs more ground than getting better gains:
-
-| Durak rate at a 4-player table | Settles near |
-|--------------------------------|--------------|
-| 10% | 547 |
-| 25% | 500 |
-| 40% | 485 |
-| always | drifts to ~220 and keeps sinking slowly |
-
-Ratings never go below 0. A player who is always the durak sinks to the floor
-and stays there. At the other end there is a natural ceiling near 160, because
-survivors at a four-player table share a single score and no rating can outrun
-that.
-
-The maths, mirrored in `src/js/elo.js` and `finish_game()`:
+`SCALE` is how fast a gap turns into a lopsided expectation. Ratings settle
+where their expected durak chance matches their real one, so at a four-player
+table a 25% rate lands back on 500, 40% settles near 440, and 10% near 600.
 
 ```
-expected_i = mean over j≠i of  1 / (1 + 10^((r_j − r_i) / 200))
-actual_i   = 0                          if i is the durak
-             (1 + 0.5(n−2)) / (n−1)     if i survived
-             0.5                        for everyone, on a draw
-delta_i    = 40 × (actual_i − expected_i), rounded, durak takes the remainder
+expected_i = 10^(−r_i / SCALE), normalised so the table sums to 1
+actual_i   = 1 for the durak, 0 for everyone else, 1/n each on a draw
+delta_i    = 40 × (expected_i − actual_i), rounded, durak takes the remainder
 ```
-
-Both sides sum to n/2, which is why the pool balances. If you change the
-constants in `elo.js`, change them in `finish_game()` too — the database is what
-actually applies ratings, and `tests/sync.test.mjs` checks the behaviour either
-way.
 
 ## Why the anon key is in the repo
 
@@ -262,12 +234,15 @@ projects after a week with no activity; opening the dashboard wakes it up.
 
 ## Sound
 
-Six short clips in `src/audio/`, played from `src/js/sound.js`: the game
-starting, a card landing, cards being drawn, the table being gathered up, and a
-result each way. Each clip keeps a small pool of audio elements, because two
-cards can land close enough together that one element cannot overlap itself.
-The draw clip keeps a larger pool than the rest, since dealing fires it every
-55ms — faster than the clip itself finishes.
+Five short clips in `src/audio/`, played from `src/js/sound.js`: the game
+starting, a card landing, the table being gathered up, and a result each way.
+Each clip keeps a small pool of audio elements, because two cards can land close
+enough together that one element cannot overlap itself.
+
+There is deliberately no per-card sound while dealing or drawing. The gathering
+slide already covers those moments, and a clip firing once per card turned into
+a rattle. To bring one back, add it to `CLIPS` in `sound.js` and call it from
+`runEffects` in `game.js`.
 
 Browsers refuse to play anything until the person has interacted with the page,
 so the first click is used to prime the clips rather than to play them. The
