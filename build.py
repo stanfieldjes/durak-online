@@ -180,6 +180,20 @@ def collect_assets(config: dict) -> dict:
     return assets, js_hash
 
 
+def verify_hidden_works(css_text: str) -> None:
+    """
+    Views are toggled with the `hidden` attribute. That gets display:none from
+    the browser's default stylesheet, which any author rule setting `display`
+    overrides — so a single `.panel { display: grid }` can make an element
+    impossible to hide. Fail the build unless the stylesheet restates it.
+    """
+    if not re.search(r"\[hidden\][^{]*\{[^}]*display\s*:\s*none\s*!important", css_text):
+        raise BuildError(
+            "stylesheet must contain `[hidden] { display: none !important; }` — "
+            "without it, any rule setting `display` stops `hidden` from working"
+        )
+
+
 def build() -> None:
     started = time.perf_counter()
     config = load_config()
@@ -187,6 +201,9 @@ def build() -> None:
     if DIST.exists():
         shutil.rmtree(DIST)
     DIST.mkdir(parents=True)
+
+    css_text = "\n".join(p.read_text(encoding="utf-8") for p in (SRC / "styles").glob("*.css"))
+    verify_hidden_works(css_text)
 
     assets, js_hash = collect_assets(config)
     write_js_config(config, js_hash)
