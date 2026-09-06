@@ -191,7 +191,7 @@ check('the same seed deals differently for different table sizes',
 console.log('Checking rating behaviour...');
 const sum = (xs) => xs.reduce((a, b) => a + b, 0);
 
-check('everyone starts at 100', START === 100);
+check('everyone starts at 500', START === 500);
 
 // Every change is a whole number, and they still cancel out exactly.
 for (const n of [2, 3, 4]) {
@@ -215,12 +215,28 @@ for (const n of [2, 3, 4]) {
 // Two players: one loser, one winner, so it has to be symmetric.
 {
   const [w, l] = ratingChanges([START, START], 1);
-  check('an even heads-up game moves 5 points', w === 5 && l === -5);
+  check('an even heads-up game moves 20 points', w === 20 && l === -20);
+}
+
+// A rating gap should visibly damp the result. This is the whole reason for the
+// larger base: at the old scale a 50-point gap only moved 5 points to 4.
+{
+  const even = ratingChanges([START, START], 1)[0];
+  const by50 = ratingChanges([START + 50, START], 1)[0];
+  const by100 = ratingChanges([START + 100, START], 1)[0];
+  const by200 = ratingChanges([START + 200, START], 1)[0];
+  check('a 50-point favourite gains clearly less', by50 <= even - 5);
+  check('gains keep shrinking as the gap widens', by100 < by50 && by200 < by100);
+  check('a heavy favourite gains almost nothing', by200 <= 5);
+
+  // And the upset is worth more than an expected win.
+  const upset = ratingChanges([START + 200, START], 0)[1];
+  check('beating a much stronger player pays well', upset >= even + 10);
 }
 
 // Three and four players: losing costs much more than winning gains, because
 // the durak's loss is split among everyone who got out.
-for (const [n, expectedDurak, expectedSurvivor] of [[3, -6, 3], [4, -6, 2]]) {
+for (const [n, expectedDurak, expectedSurvivor] of [[3, -20, 10], [4, -21, 7]]) {
   const deltas = ratingChanges(Array(n).fill(START), 0);
   check(`${n}p: the durak loses ${-expectedDurak}`, deltas[0] === expectedDurak);
   check(`${n}p: each survivor gains ${expectedSurvivor}`,
@@ -235,58 +251,64 @@ check('an even draw moves nothing',
 
 // Being the durak against stronger players is more forgivable.
 //
-// Whole numbers make this coarse: at K = 10 a three-player loss to equals and
-// a loss to players rated 60 points lower both land on −6, because the exact
-// figures (5.0 and 6.7) round the same way. The ordering still holds, and a
-// wider gap does separate them. Raise K in elo.js and finish_game() together
-// if you want finer resolution.
+// On the 500 base these separate cleanly. At the old 100 base a loss to equals
+// and a loss to much weaker players both rounded to the same figure.
 {
-  const vsStrong = ratingChanges([100, 180, 180], 0)[0];
-  const vsEqual = ratingChanges([100, 100, 100], 0)[0];
-  const vsWeak = ratingChanges([100, 20, 20], 0)[0];
+  const vsStrong = ratingChanges([500, 580, 580], 0)[0];
+  const vsEqual = ratingChanges([500, 500, 500], 0)[0];
+  const vsWeak = ratingChanges([500, 420, 420], 0)[0];
   check('losing to stronger players costs least', vsStrong > vsEqual);
   check('losing to much weaker players costs most', vsWeak < vsEqual);
-  check('losing to much weaker players is punished hard', vsWeak <= -8);
+  check('the three cases are clearly separated', vsStrong - vsEqual >= 5 && vsEqual - vsWeak >= 5);
 }
 
 // The floor holds.
 check('a rating never drops below the floor',
-  1 + ratingChanges([1, 150, 150], 0)[0] >= FLOOR);
+  1 + ratingChanges([1, 550, 550], 0)[0] >= FLOOR);
 
-// Someone who is always the durak sinks to the floor and stays there.
+// Someone who is always the durak sinks a long way. The fall slows as it goes,
+// because a rating that low is expected to lose, so the floor is not actually
+// reached in any realistic number of games.
 {
   let rating = START;
-  for (let i = 0; i < 800; i++) {
+  for (let i = 0; i < 2000; i++) {
     rating = Math.max(FLOOR, rating + ratingChanges([rating, START, START, START], 0)[0]);
   }
-  check('a player who always loses ends at the floor', rating === FLOOR);
+  check('a player who always loses ends far below start', rating < 300 && rating >= FLOOR);
 }
 
-// Someone who is never the durak climbs to a ceiling and stops. Whole-number
-// changes make that ceiling firmer than it was: once the exact gain falls below
-// half a point it rounds to nothing, so the very top of the ladder compresses.
+// Someone who is never the durak climbs to a ceiling and stops, because
+// survivors at a four-player table share a single score that no rating can
+// outrun.
 {
   let rating = START;
-  for (let i = 0; i < 800; i++) {
+  for (let i = 0; i < 2000; i++) {
     rating += ratingChanges([rating, START, START, START], 1)[0];
   }
   check('a player who never loses settles near the ceiling',
-    rating > 130 && rating < 155);
+    rating > 530 && rating < 590);
 }
 
-// A realistic bad run costs real ground.
+// Realistic rates land either side of the starting rating.
 {
-  let rating = START;
-  for (let i = 0; i < 4000; i++) {
-    const durak = i % 5 < 2 ? 0 : 1;          // durak 40% of the time
-    rating = Math.max(FLOOR, rating + ratingChanges([rating, START, START, START], durak)[0]);
-  }
-  check('a 40% durak rate settles well below start', rating > 60 && rating < 95);
+  const settle = (rate) => {
+    let rating = START;
+    for (let i = 0; i < 6000; i++) {
+      const durak = i % 10 < rate ? 0 : 1;
+      rating = Math.max(FLOOR, rating + ratingChanges([rating, START, START, START], durak)[0]);
+    }
+    return rating;
+  };
+  const bad = settle(4);    // durak 40% of the time
+  const good = settle(1);   // durak 10% of the time
+  check('a 40% durak rate settles below start', bad > 440 && bad < START);
+  check('a 10% durak rate settles above start', good > START && good < 590);
+  check('the two are clearly apart', good - bad > 40);
 }
 
 // Scores on both sides sum to n/2, which is why the pool balances.
 for (const n of [2, 3, 4]) {
-  const ratings = Array.from({ length: n }, (_, i) => 60 + i * 30);
+  const ratings = Array.from({ length: n }, (_, i) => 460 + i * 30);
   const expectedTotal = sum(ratings.map((_, s) => expectedScore(ratings, s)));
   const actualTotal = sum(ratings.map((_, s) => actualScore(n, s, 0)));
   check(`${n}p: expected scores sum to n/2`, Math.abs(expectedTotal - n / 2) < 1e-9);

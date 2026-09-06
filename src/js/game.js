@@ -29,22 +29,23 @@ import {
 import { readableError } from './supabase.js';
 import { session } from './auth.js';
 import { formatRatingDelta, formatRating } from './elo.js';
+import { flyTableAway, flyDraw, clearEffects, reducedMotion } from './fx.js';
+import { play as playSound, playRepeat, isMuted, toggleMuted } from './sound.js';
 import { $, show, setText, clear, toast, cardEl } from './ui.js';
 
-const MAX_RETRIES = 3;
-const CLEAR_MS = 420;
+/** How long the finished table stays on screen before the scores appear. */
+const RESULT_DELAY_MS = 2200;
 
-let game = null;      // the games row, with seats sorted by seat number
-let state = null;     // the position
+let game = null;       // the games row, seats sorted
+let confirmed = null;  // the last position the server acknowledged
+let pending = [];      // moves applied locally but not yet acknowledged
+let state = null;      // confirmed + pending, i.e. what the player sees
 let mySeat = null;
-let selected = null;  // card chosen from hand while defending
+let selected = null;
 let unwatch = null;
-let busy = false;
-let settling = false;
+let sending = false;
 let resultShown = false;
-
-const reducedMotion = () =>
-  window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
+let resultTimer = null;
 
 export function initGame() {
   $('#act-take').addEventListener('click', () => play({ type: 'take' }));
@@ -54,6 +55,17 @@ export function initGame() {
   $('#copy-link').addEventListener('click', onCopyLink);
   $('#start-now').addEventListener('click', onStartNow);
   $('#result-again').addEventListener('click', () => { location.hash = '#/'; });
+
+  const mute = $('#act-mute');
+  const paintMute = () => {
+    setText(mute, isMuted() ? 'Sound off' : 'Sound on');
+    mute.setAttribute('aria-pressed', String(isMuted()));
+  };
+  mute.addEventListener('click', () => {
+    toggleMuted();
+    paintMute();
+  });
+  paintMute();
 }
 
 export async function enterGame(gameId) {
@@ -74,7 +86,6 @@ export async function enterGame(gameId) {
 
   mySeat = seatOf(session.user.id);
   if (mySeat === null) {
-    // Arrived by shared link without a seat: take one if there is room.
     if (game.status !== 'waiting') {
       toast('That game has already started.');
       location.hash = '#/';
@@ -97,15 +108,14 @@ export async function enterGame(gameId) {
     if (event.kind === 'seats') {
       game = (await getGame(gameId)) ?? game;
     } else {
-      // Realtime payloads carry no joined columns, so keep the ones we have.
-      game = { ...game, ...event.row };
+      game = mergeRow(game, event.row);
     }
     if (mySeat === null) mySeat = seatOf(session.user.id);
-    await moveTo(game.state);
+    adopt(game.state);
     await maybeSettle();
   });
 
-  await moveTo(game.state);
+  adopt(game.state);
   await maybeSettle();
 }
 
@@ -117,16 +127,29 @@ export function leaveGame() {
 function reset() {
   if (unwatch) unwatch();
   unwatch = null;
+  clearTimeout(resultTimer);
+  resultTimer = null;
+  clearEffects();
   game = null;
+  confirmed = null;
+  pending = [];
   state = null;
   mySeat = null;
   selected = null;
-  busy = false;
-  settling = false;
+  sending = false;
   resultShown = false;
   show($('#result'), false);
   show($('#waiting'), false);
   show($('#felt'), false);
+}
+
+/**
+ * Realtime payloads carry only the `games` columns, with no joined seats, so
+ * keep the ones already loaded rather than letting them be overwritten.
+ */
+function mergeRow(previous, row) {
+  const players = row?.players?.length ? row.players : previous?.players;
+  return { ...previous, ...row, players };
 }
 
 function seatOf(userId) {
@@ -138,152 +161,215 @@ function profileAt(seat) {
   return (game?.players ?? []).find((p) => p.seat === seat)?.profile ?? null;
 }
 
+function nameAt(seat) {
+  return profileAt(seat)?.username ?? `Seat ${seat + 1}`;
+}
+
 /* ------------------------------------------------------------------ */
-/* state transitions and animation                                     */
+/* state: confirmed + pending                                          */
 /* ------------------------------------------------------------------ */
+
+/** Rebuild the visible position by replaying unacknowledged moves. */
+function rebuild() {
+  let next = confirmed;
+  const kept = [];
+  for (const move of pending) {
+    try {
+      next = applyMove(next, mySeat, move);
+      kept.push(move);
+    } catch {
+      // Somebody else's move made ours impossible. Dropping it is correct.
+    }
+  }
+  pending = kept;
+  return next;
+}
+
+/** Take a new server position, replay anything still in flight, and draw it. */
+function adopt(serverState) {
+  const previous = state;
+  confirmed = serverState;
+  const next = rebuild();
+  present(previous, next);
+}
+
+/** Apply locally without waiting for anything. */
+function advanceLocally(move) {
+  const previous = state;
+  const next = applyMove(state, mySeat, move);
+  pending.push(move);
+  present(previous, next);
+}
 
 /**
- * Adopt a new position, playing the round-end animation first if one is due.
- *
- * The cards leaving the table are the only moment in Durak where a pile of
- * cards moves somewhere, so it is worth showing rather than snapping.
+ * Show a new position: fire the effects for whatever just happened, then
+ * render immediately. Effects animate clones, so rendering does not wait.
  */
-async function moveTo(next) {
-  const previous = state;
-  const ending = roundEnding(previous, next);
-
-  if (ending && previous?.table?.length && !reducedMotion()) {
-    await animateTableClear(ending);
-  }
-
+function present(previous, next) {
+  const events = newEvents(previous, next);
+  if (previous && next && events.length) runEffects(previous, next, events);
   state = next;
   render();
 }
 
-/** The 'beaten' or 'taken' entry appended since the last position, if any. */
-function roundEnding(previous, next) {
-  if (!previous?.log || !next?.log) return null;
-  const fresh = next.log.slice(previous.log.length);
-  return fresh.find((e) => e.t === 'beaten' || e.t === 'taken') ?? null;
+function newEvents(previous, next) {
+  if (!previous?.log || !next?.log) return [];
+  if (next.log.length <= previous.log.length) return [];
+  return next.log.slice(previous.log.length);
 }
 
-/** Where the cards should fly to. */
-function destinationFor(ending) {
-  if (ending.t === 'beaten') return $('#discard');
-  if (ending.seat === mySeat) return $('#my-hand');
-  return document.querySelector(`.player[data-seat="${ending.seat}"]`);
-}
+/* ------------------------------------------------------------------ */
+/* effects                                                             */
+/* ------------------------------------------------------------------ */
 
-function animateTableClear(ending) {
-  const slots = [...document.querySelectorAll('#slots .slot')];
-  if (slots.length === 0) return Promise.resolve();
+function runEffects(previous, next, events) {
+  const ending = events.find((e) => e.t === 'beaten' || e.t === 'taken');
 
-  const target = destinationFor(ending);
-  const targetBox = target?.getBoundingClientRect();
+  if (events.some((e) => e.t === 'attack' || e.t === 'defend')) playSound('play');
 
-  slots.forEach((slot, i) => {
-    const box = slot.getBoundingClientRect();
-    let dx = 0;
-    let dy = ending.t === 'beaten' ? -140 : 140;
-    if (targetBox && targetBox.width) {
-      dx = targetBox.left + targetBox.width / 2 - (box.left + box.width / 2);
-      dy = targetBox.top + targetBox.height / 2 - (box.top + box.height / 2);
+  if (ending) {
+    const slots = [...document.querySelectorAll('#slots .slot')];
+    const collected = ending.t === 'taken';
+    const target = collected
+      ? (ending.seat === mySeat ? $('#my-hand') : seatPanel(ending.seat))
+      : $('#discard');
+    flyTableAway(slots, target, { collected });
+    playSound('gather');
+  }
+
+  // Hands refilling from the stock: draw as many cards as each seat gained.
+  const drawn = previous.deck.length - next.deck.length;
+  if (drawn > 0) {
+    const stock = $('#deck-pile');
+    let total = 0;
+    for (let seat = 0; seat < next.playerCount; seat++) {
+      const gained = next.hands[seat].length - previous.hands[seat].length;
+      if (gained <= 0) continue;
+      total += gained;
+      const target = seat === mySeat ? $('#my-hand') : seatPanel(seat);
+      // Let the table finish clearing first, so the two do not overlap.
+      const start = ending && !reducedMotion() ? 260 : 0;
+      setTimeout(() => flyDraw(stock, target, gained), start);
     }
-    slot.style.setProperty('--dx', `${Math.round(dx)}px`);
-    slot.style.setProperty('--dy', `${Math.round(dy)}px`);
-    slot.style.setProperty('--delay', `${i * 40}ms`);
-    slot.classList.add(ending.t === 'beaten' ? 'slot--discarding' : 'slot--collected');
-  });
-
-  return new Promise((resolve) => setTimeout(resolve, CLEAR_MS));
+    if (total > 0) setTimeout(() => playRepeat('draw', total), ending ? 300 : 40);
+  }
 }
+
+const seatPanel = (seat) => document.querySelector(`.player[data-seat="${seat}"]`);
 
 /* ------------------------------------------------------------------ */
 /* moves                                                               */
 /* ------------------------------------------------------------------ */
 
 /**
- * Apply a move locally, then try to write it.
+ * Play a move.
  *
- * Attacking is free-for-all, so another player may have moved between our read
- * and our write. The database rejects that write rather than letting one of the
- * two cards vanish, and we replay the move against the fresh position. If the
- * move stopped being legal in the meantime, we say so instead of forcing it.
+ * The move lands on screen straight away and joins a queue that is drained in
+ * the background, so the primary attacker can put down several cards in a row
+ * without waiting for the network or for an animation to finish.
  */
-async function play(move) {
-  if (busy || !state || state.finished) return;
+function play(move) {
+  if (!state || state.finished) return;
   if (!canAct(state, mySeat)) {
     toast('You cannot act right now.');
     return;
   }
 
-  busy = true;
   selected = null;
-  const restore = state;
+  try {
+    advanceLocally(move);
+  } catch (error) {
+    toast(error instanceof IllegalMove ? error.message : 'That move is not allowed.');
+    return;
+  }
+  drain();
+}
+
+/**
+ * Send queued moves one at a time.
+ *
+ * Each write names the version it was built on, so if another player got there
+ * first the database refuses it. We then re-read, replay whatever is still
+ * legal, and carry on from there.
+ */
+async function drain() {
+  if (sending || pending.length === 0 || !game) return;
+  sending = true;
 
   try {
-    for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-      const base = state;
+    while (pending.length > 0) {
+      const move = pending[0];
+
       let next;
       try {
-        next = applyMove(base, mySeat, move);
-      } catch (error) {
-        if (attempt > 0) toast('Someone else moved first — that is no longer available.');
-        else toast(error instanceof IllegalMove ? error.message : 'That move is not allowed.');
-        state = base;
-        return;
+        next = applyMove(confirmed, mySeat, move);
+      } catch {
+        pending.shift(); // no longer legal against the confirmed position
+        adopt(confirmed);
+        continue;
       }
-
-      await moveTo(next); // optimistic, so the table responds immediately
 
       try {
-        const row = await submitMove(game.id, next, base.version);
-        game = { ...game, ...row, players: row.players ?? game.players };
-        state = row.state;
-        return;
+        const row = await submitMove(game.id, next, confirmed.version);
+        game = mergeRow(game, row);
+        pending.shift();
+        confirmed = row.state;
+        state = rebuild();
+        render();
       } catch (error) {
         if (!isStaleError(error)) {
-          state = restore;
+          pending = [];
           toast(readableError(error));
+          const fresh = await getGame(game.id).catch(() => null);
+          if (fresh) game = fresh;
+          adopt(game.state);
           return;
         }
-        const fresh = await getGame(game.id);
-        if (fresh) {
-          game = fresh;
-          state = fresh.state;
+        const fresh = await getGame(game.id).catch(() => null);
+        if (!fresh) return;
+        const before = pending.length;
+        game = fresh;
+        adopt(fresh.state);
+        if (pending.length < before) {
+          toast('Someone else moved first — one of your cards did not land.');
         }
-        render();
       }
     }
-    toast('The table is busy — try that again.');
-    state = restore;
   } finally {
-    busy = false;
-    render();
+    sending = false;
     await maybeSettle();
   }
 }
 
-/** Once the engine says the game is over, ask the database to settle ratings. */
+/**
+ * Settle the game.
+ *
+ * The scoreboard is held back for a moment so the last exchange stays on
+ * screen. That matters most when the defender beats the final attack and
+ * empties their hand: the draw is something to watch, not something to be told
+ * about after the fact.
+ */
 async function maybeSettle() {
-  if (!state?.finished) return;
+  const over = state?.finished || game?.status === 'finished';
+  if (!over || resultShown || resultTimer) return;
 
-  if (game.status === 'finished') {
-    await showResult();
-    return;
+  if (game.status !== 'finished' && state?.finished) {
+    try {
+      await finishGame(game.id, state.draw ? -1 : state.durak);
+    } catch (error) {
+      if (!/not in progress|already/i.test(error?.message ?? '')) console.warn(error);
+    }
+    game = (await getGame(game.id)) ?? game;
   }
-  if (settling) return;
 
-  settling = true;
-  try {
-    await finishGame(game.id, state.draw ? -1 : state.durak);
-  } catch (error) {
-    // Every client reports; whoever loses the race gets a harmless error.
-    if (!/not in progress|already/i.test(error?.message ?? '')) console.warn(error);
-  }
-  game = (await getGame(game.id)) ?? game;
-  if (game.status === 'finished') await showResult();
-  else settling = false;
+  if (state?.finished) playSound(state.durak === mySeat ? 'loss' : 'win');
+  else playSound(game.durak_id === session.user.id ? 'loss' : 'win');
+
+  render();
+  resultTimer = setTimeout(() => {
+    resultTimer = null;
+    showResult();
+  }, reducedMotion() ? 400 : RESULT_DELAY_MS);
 }
 
 async function onLeave() {
@@ -324,7 +410,7 @@ async function onStartNow(event) {
   try {
     await startGame(game.id, newGame(Number(game.seed), game.players.length));
     game = (await getGame(game.id)) ?? game;
-    await moveTo(game.state);
+    adopt(game.state);
   } catch (error) {
     toast(readableError(error));
   } finally {
@@ -389,8 +475,6 @@ function renderOpponents() {
   const box = $('#opponents');
   clear(box);
 
-  // Seats run clockwise from ours, so the player who acts after us sits on the
-  // left and the layout closes back round to our own hand at the bottom.
   const order = [];
   for (let i = 1; i < state.playerCount; i++) order.push((mySeat + i) % state.playerCount);
   box.dataset.count = String(order.length);
@@ -402,6 +486,7 @@ function renderOpponents() {
     panel.dataset.seat = String(seat);
     if (seat === state.defender) panel.classList.add('player--defending');
     if (seat === state.attacker) panel.classList.add('player--attacking');
+    if (seat === state.defender && state.taking) panel.classList.add('player--taking');
     if (state.out[seat]) panel.classList.add('player--out');
     if (canAct(state, seat)) panel.classList.add('player--acting');
 
@@ -423,14 +508,13 @@ function renderOpponents() {
       : state.passed[seat] && seat !== state.defender
         ? 'done'
         : roleOf(state, seat);
-    if (seat === state.defender && state.taking) panel.classList.add('player--taking');
 
     head.append(name, rating, role);
 
     const fan = document.createElement('div');
     fan.className = 'fan fan--opponent';
     const count = state.hands[seat].length;
-    for (let i = 0; i < Math.min(count, 8); i++) fan.append(cardEl(null, { faceDown: true }));
+    for (let i = 0; i < Math.min(count, 10); i++) fan.append(cardEl(null, { faceDown: true }));
 
     const tally = document.createElement('span');
     tally.className = 'player__count';
@@ -442,9 +526,6 @@ function renderOpponents() {
 }
 
 function renderStock() {
-  // The trump card is the bottom card of the stock and is dealt out like any
-  // other, so it leaves the table once the stock runs dry. The label in the
-  // bar above keeps the suit on screen after that.
   const trumpBox = $('#trump-card');
   clear(trumpBox);
   if (state.deck.length > 0) {
@@ -494,7 +575,7 @@ function renderHand() {
   const box = $('#my-hand');
   clear(box);
 
-  const live = !busy && !state.finished && !state.out[mySeat];
+  const live = !state.finished && !state.out[mySeat];
   const attacks = live ? legalAttacks(state, mySeat) : [];
   const defending = live && mySeat === state.defender && !state.taking;
 
@@ -513,8 +594,6 @@ function renderHand() {
 
     const el = cardEl(card, { interactive: true, trump: state.trump });
     el.disabled = !playable;
-    // Unplayable cards are darkened rather than faded, because the hand
-    // overlaps and stacked transparency reads as mud.
     el.classList.toggle('card--dim', !playable);
     el.classList.toggle('is-playable', playable);
     el.classList.toggle('is-selected', Boolean(selected && sameCard(selected, card)));
@@ -558,11 +637,8 @@ function renderPrompt() {
 }
 
 function renderActions() {
-  const live = !busy && !state.finished && !state.out[mySeat];
+  const live = !state.finished && !state.out[mySeat];
 
-  // Keep the take button on screen for the whole defence and fade it once every
-  // attack is beaten, so holding the line reads as an achievement rather than
-  // the option quietly vanishing.
   const defending = live && mySeat === state.defender && state.table.length > 0 && !state.taking;
   const takeable = canTake(state, mySeat);
   const take = $('#act-take');
@@ -574,47 +650,47 @@ function renderActions() {
   show($('#act-pass'), live && canPass(state, mySeat));
 }
 
-/**
- * Draw the final scores.
- *
- * Safe to call more than once: it reads ratings from the server rather than
- * adjusting anything in place, so a repeated call cannot double the numbers.
- */
+/* ------------------------------------------------------------------ */
+/* result                                                              */
+/* ------------------------------------------------------------------ */
+
 async function showResult() {
   if (resultShown) return;
   resultShown = true;
 
-  // Always re-read the row. Realtime payloads carry no joined columns, so the
-  // profiles attached to `game` may be whatever was loaded when the table
-  // opened. Re-reading guarantees the ratings below are the settled ones.
   try {
     const fresh = await getGame(game.id);
     if (fresh) game = fresh;
   } catch {
-    /* fall back to what we already have */
+    /* fall back to what we have */
   }
 
   const deltas = game.rating_delta ?? {};
   const mine = deltas[session.user.id];
   const numeric = mine === undefined || mine === null ? null : Number(mine);
 
+  // The position never reached an ending of its own, so somebody walked out.
+  const conceded = !state?.finished && game.status === 'finished';
+  const durakSeat = (game.players ?? []).find((p) => p.player_id === game.durak_id)?.seat;
+
   let title;
-  if (!game.durak_id) title = 'Draw.';
-  else if (game.durak_id === session.user.id) title = 'You are the durak.';
-  else title = 'You got out.';
+  if (conceded && game.durak_id && game.durak_id !== session.user.id) {
+    title = `${nameAt(durakSeat)} left the game.`;
+  } else if (!game.durak_id) {
+    title = 'Draw.';
+  } else if (game.durak_id === session.user.id) {
+    title = 'You are the durak.';
+  } else {
+    title = 'You got out.';
+  }
 
   setText($('#result-title'), title);
 
-  // Losing points reads red even on the result screen — a green figure beside
-  // "You are the durak" was giving the wrong impression at a glance.
   const figure = $('#result-elo');
   setText(figure, numeric === null ? '' : `${formatRatingDelta(numeric)} rating`);
   figure.classList.toggle('delta--down', numeric !== null && numeric < 0);
   figure.classList.toggle('delta--up', numeric !== null && numeric > 0);
 
-  // finish_game() has already written these ratings, so they are final. The
-  // delta is shown beside them for context, NOT added to them — doing both is
-  // what made the scoreboard read double the points that were actually moved.
   const list = $('#result-table');
   clear(list);
   for (const seatRow of game.players ?? []) {
@@ -637,7 +713,6 @@ async function showResult() {
     list.append(li);
   }
 
-  // Refresh the header from the database rather than adding the delta locally.
   try {
     const fresh = await getProfile(session.user.id);
     if (fresh) {
@@ -645,7 +720,7 @@ async function showResult() {
       setText($('#whoami-elo'), formatRating(fresh.rating));
     }
   } catch {
-    /* the header just keeps the old number */
+    /* the header keeps its old number */
   }
 
   show($('#result'), true);

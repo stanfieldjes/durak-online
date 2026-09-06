@@ -407,22 +407,20 @@ body {
 
 .felt__trump.is-red { color: #ff8b83; }
 
+.felt__bar-right { display: flex; align-items: center; gap: 0.3rem; }
+
 .btn--corner { padding: 0.3rem 0.7rem; color: rgba(255, 255, 255, 0.6); }
 .btn--corner:hover { color: #fff; background: rgba(0, 0, 0, 0.25); }
 
-/*
-  Seats are laid out as they would be around a table, with the user's own hand
-  at the bottom of the screen: one opponent sits opposite, two make a triangle,
-  three make a square with players to the left, opposite, and right.
-*/
+/* All opponents sit in one row across the top, with your own hand below. */
 .opponents {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
   gap: 0.75rem;
   align-items: start;
 }
 
-.opponents[data-count="1"] > .player { grid-column: 2; }
+.player { grid-column: 2; }
 
 .opponents[data-count="2"] > .player:nth-child(1) { grid-column: 1; }
 .opponents[data-count="2"] > .player:nth-child(2) { grid-column: 3; }
@@ -441,11 +439,20 @@ body {
   align-content: start;
 }
 
-.player--defending { border-color: var(--red); }
-.player--attacking { border-color: #fff; }
-.player--acting { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5); }
+.player--defending {
+  border-color: #000;
+  box-shadow: inset 0 0 0 1px #000;
+  background: rgba(0, 0, 0, 0.38);
+}
 
-.player--taking { border-color: var(--red); border-style: dashed; }
+.player--attacking {
+  border-color: var(--red);
+  box-shadow: inset 0 0 0 1px var(--red);
+}
+
+.player--acting { outline: 1px solid rgba(255, 255, 255, 0.35); outline-offset: 2px; }
+
+.player--taking { border-style: dashed; }
 .player--taking .player__role { color: var(--red-soft); font-weight: 500; }
 
 .player--out { border-color: #0a2e1d; background: rgba(0, 0, 0, 0.45); color: #6e837a; }
@@ -455,8 +462,8 @@ body {
 .player__name { font-weight: 500; }
 .player__rating { color: var(--green-bright); font-variant-numeric: tabular-nums; font-size: var(--step--1); }
 .player__role { margin-left: auto; font-size: var(--step--1); color: var(--chalk-dim); }
-.player--defending .player__role { color: var(--red-soft); }
-.player--attacking .player__role { color: #fff; }
+.player--defending .player__role { color: var(--chalk); }
+.player--attacking .player__role { color: var(--red-soft); }
 .player__count { font-size: var(--step--1); color: var(--chalk-dim); }
 
 .felt__middle {
@@ -558,8 +565,14 @@ body {
 .fan--opponent .card {
   height: calc(var(--card-h) * 0.5);
   width: calc(var(--card-w) * 0.72);
-  margin-inline: calc(var(--card-w) * -0.26);
+  /* Barely overlapping, each with a rim, so a fan of backs reads as a countable
+     row of cards instead of one striped block. */
+  margin-inline: calc(var(--card-w) * -0.12);
+  border-color: #000;
+  box-shadow: -2px 0 0 rgba(0, 0, 0, 0.55), inset 1px 0 0 rgba(255, 255, 255, 0.16);
 }
+
+.fan--opponent .card:first-child { box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.16); }
 
 .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }
 
@@ -652,23 +665,29 @@ button.card.is-selected {
   z-index: 3;
 }
 
-/* ---------- clearing the table ---------- */
+/* ---------- card movement ---------- */
 
-@keyframes slot-away {
-  to {
-    transform: translate(var(--dx, 0), var(--dy, -140px)) scale(0.55) rotate(9deg);
-    opacity: 0;
-  }
-}
-
-.slot--discarding, .slot--collected {
-  animation: slot-away 380ms cubic-bezier(0.4, 0, 0.2, 1) forwards;
-  animation-delay: var(--delay, 0ms);
-  z-index: 5;
+/*
+  Effects animate copies of cards in this layer rather than the real ones, so
+  the table can re-render underneath while cards are still in flight. Nothing
+  here is interactive and nothing here is read out.
+*/
+.fx-layer {
+  position: fixed;
+  inset: 0;
   pointer-events: none;
+  z-index: 9;
+  overflow: hidden;
 }
 
-.slot--collected { animation-timing-function: cubic-bezier(0.5, 0, 0.75, 0); }
+.fx-piece {
+  position: fixed;
+  margin: 0;
+  pointer-events: none;
+  will-change: transform, opacity;
+}
+
+/* ---------- clearing the table ---------- */
 
 /* ---------- result ---------- */
 
@@ -759,10 +778,6 @@ button.card.is-selected {
   .discard { grid-column: 2; text-align: center; }
   .masthead { flex-wrap: wrap; }
   .opponents { grid-template-columns: 1fr 1fr; }
-  .opponents[data-count="1"] > .player { grid-column: 1 / -1; }
-  .opponents[data-count="3"] > .player:nth-child(2) { grid-column: 1 / -1; grid-row: 1; }
-  .opponents[data-count="3"] > .player:nth-child(1) { grid-column: 1; grid-row: 2; }
-  .opponents[data-count="3"] > .player:nth-child(3) { grid-column: 2; grid-row: 2; }
   .player__role { margin-left: 0; width: 100%; }
   .seats-picker legend { line-height: 1.6; }
 }

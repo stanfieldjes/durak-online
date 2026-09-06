@@ -167,6 +167,13 @@ def collect_assets(config: dict) -> dict:
         (DIST / "styles" / name).write_bytes(data)
         assets[f"styles/{css.name}"] = f"{base}styles/{name}"
 
+    audio_src = SRC / "audio"
+    if audio_src.is_dir():
+        (DIST / "audio").mkdir(parents=True, exist_ok=True)
+        for clip in sorted(audio_src.iterdir()):
+            if clip.is_file():
+                shutil.copy2(clip, DIST / "audio" / clip.name)
+
     (DIST / "js").mkdir(parents=True, exist_ok=True)
     js_bytes = json.dumps(config, sort_keys=True).encode()  # config ships inside js/config.js
     for js in sorted((SRC / "js").glob("*.js")):

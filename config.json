@@ -1,7 +1,7 @@
 {
   "site": {
     "title": "Durak",
-    "tagline": "Last one holding cards is the fool!",
+    "tagline": "Last one holding cards is the fool.",
     "basePath": "/durak-online/"
   },
   "supabase": {

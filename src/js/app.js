@@ -11,6 +11,7 @@ import { loadSession, onAuthChange, initAuthView, renderWhoami, session } from '
 import { initLobby, enterLobby, leaveLobby } from './lobby.js';
 import { initGame, enterGame, leaveGame } from './game.js';
 import { enterLeaderboard } from './leaderboard.js';
+import { initSound } from './sound.js';
 
 let current = null;
 
@@ -76,6 +77,7 @@ async function boot() {
     toast('Cannot reach Supabase. Check the credentials in config.json.');
   }
 
+  initSound();
   initAuthView(() => { location.hash = '#/'; route(); });
   initLobby();
   initGame();

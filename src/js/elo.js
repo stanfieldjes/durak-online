@@ -6,9 +6,9 @@
  * onto a rating where losing hurts and winning is a modest bonus, because the
  * points the durak drops are split among all the survivors.
  *
- *   4 players, all rated equally:  durak −6,  each survivor +2
- *   3 players, all rated equally:  durak −6,  each survivor +3
- *   2 players, all rated equally:  durak −5,  the winner   +5
+ *   4 players, all rated equally:  durak −21,  each survivor +7
+ *   3 players, all rated equally:  durak −20,  each survivor +10
+ *   2 players, all rated equally:  durak −20,  the winner   +20
  *
  * Ratings and changes are whole numbers. Rounding each share separately would
  * not add back up, so the survivors take clean numbers and the durak absorbs
@@ -16,18 +16,23 @@
  * player carries the loss.
  *
  * The scale is asymmetric in the same direction. At a 4-player table, being
- * the durak a quarter of the time settles you at exactly 100. Dropping to 40%
- * costs about 35 points; improving to 10% gains about 35. Getting much worse
- * keeps costing; getting much better runs into a ceiling near 160.
+ * the durak a quarter of the time settles you at exactly 500. Dropping to 40%
+ * costs about 35 points; improving to 10% gains about 35.
+ *
+ * K and SCALE pull against each other. K is how much a game is worth; SCALE is
+ * how quickly a rating gap turns into a lopsided expectation. Raising K makes
+ * results move faster but adds noise; lowering SCALE makes gaps matter more
+ * per game but squeezes the ladder into a narrower band, so large gaps stop
+ * occurring at all. See README, "Rating".
  *
  * With two players there is one loser and one winner, so anything the loser
  * drops the winner must pick up. Asymmetry there is only possible by destroying
  * points, which is what LOSS_BIAS does — see README, "Rating".
  */
 
-export const START = 100;   // everyone opens here
+export const START = 500;   // everyone opens here
 export const SCALE = 200;   // sets how far apart the ladder spreads
-export const K = 10;        // most a rating can move in one game
+export const K = 40;        // most a rating can move in one game
 export const FLOOR = 0;     // ratings never go below this
 
 /**

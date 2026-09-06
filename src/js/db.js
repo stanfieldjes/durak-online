@@ -38,11 +38,16 @@ const GAME_COLUMNS = `
   players:game_players ( seat, player_id, profile:profiles ( id, username, rating ) )
 `;
 
-/** Seats in seat order, so index === seat number. */
+/**
+ * Seats in seat order, so index === seat number.
+ *
+ * Leaves the row untouched when it carries no seats at all. The RPCs return a
+ * bare `games` row with no join, and manufacturing an empty array here used to
+ * wipe the names and ratings off the table on every move.
+ */
 function withSortedSeats(game) {
-  if (!game) return game;
-  const players = [...(game.players ?? [])].sort((a, b) => a.seat - b.seat);
-  return { ...game, players };
+  if (!game || !Array.isArray(game.players)) return game;
+  return { ...game, players: [...game.players].sort((a, b) => a.seat - b.seat) };
 }
 
 export async function createGame(maxPlayers) {

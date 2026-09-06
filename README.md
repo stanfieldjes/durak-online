@@ -16,7 +16,10 @@ Supabase      ──►  Postgres + auth + realtime
 **1. Create the Supabase project**
 
 Sign up at supabase.com, create a project, open the SQL editor, paste in all of
-`supabase/schema.sql`, and run it. That creates the tables, the row-level
+`supabase/schema.sql`, and run it. (If you set the database up before ratings
+became whole numbers, run the migrations in
+`supabase/` in order instead — `schema.sql` will not alter tables that already
+exist.) That creates the tables, the row-level
 security policies, the RPCs, and the realtime publication.
 
 In Authentication → Providers, make sure Email is on. For a private game among
@@ -100,14 +103,39 @@ every one either replayed cleanly or correctly abandoned.
 
 ## Rating
 
-Everyone starts at **100**. Durak has exactly one loser per game, so the rating
+Everyone starts at **500**. Durak has exactly one loser per game, so the rating
 is built around that: the durak drops points, and the survivors split them.
+Ratings and changes are always whole numbers.
 
 | Table | Durak | Each survivor |
 |-------|-------|---------------|
-| 4 players | −5.0 | +1.7 |
-| 3 players | −5.0 | +2.5 |
-| 2 players | −5.0 | +5.0 |
+| 4 players | −21 | +7 |
+| 3 players | −20 | +10 |
+| 2 players | −20 | +20 |
+
+A rating gap damps the result, and on this base it damps it visibly. Heads-up,
+with the favourite winning:
+
+| Gap | Favourite gains |
+|-----|-----------------|
+| 0 | +20 |
+| 50 | +14 |
+| 100 | +10 |
+| 200 | +4 |
+
+An upset runs the other way: beating someone 200 points ahead of you is worth
++36.
+
+Rounding each share separately would not add back up, so the survivors take
+clean numbers and the durak absorbs whatever is left over. That suits a game
+whose whole point is that one player carries the loss.
+
+`K` and `SCALE` in `src/js/elo.js` pull against each other, and both must be
+changed in `finish_game()` at the same time. `K` is what a game is worth;
+`SCALE` is how fast a gap turns into a lopsided expectation. At K = 40 a game
+moves about 20 points while realistic ratings only span about 70, so results
+move fast and bounce around. Drop `K` to 20 if that feels too jumpy, or raise
+`SCALE` to spread the ladder wider at the cost of gaps mattering less.
 
 That is the "losing is punishing, winning is a small bonus" shape you wanted,
 and at 3 and 4 players it falls out for free: whatever the durak loses is shared
@@ -127,10 +155,10 @@ worse than that costs more ground than getting better gains:
 
 | Durak rate at a 4-player table | Settles near |
 |--------------------------------|--------------|
-| 10% | 135 |
-| 25% | 100 |
-| 40% | 65 |
-| 60% | 12 |
+| 10% | 547 |
+| 25% | 500 |
+| 40% | 485 |
+| always | drifts to ~220 and keeps sinking slowly |
 
 Ratings never go below 0. A player who is always the durak sinks to the floor
 and stays there. At the other end there is a natural ceiling near 160, because
@@ -144,7 +172,7 @@ expected_i = mean over j≠i of  1 / (1 + 10^((r_j − r_i) / 200))
 actual_i   = 0                          if i is the durak
              (1 + 0.5(n−2)) / (n−1)     if i survived
              0.5                        for everyone, on a draw
-delta_i    = 10 × (actual_i − expected_i)
+delta_i    = 40 × (actual_i − expected_i), rounded, durak takes the remainder
 ```
 
 Both sides sum to n/2, which is why the pool balances. If you change the
@@ -208,11 +236,15 @@ config.json              site + Supabase settings (safe to commit)
 src/templates/           base.html and the view partials
 src/styles/main.css
 src/js/durak.js          rules engine — pure, no DOM, no network
+src/js/fx.js             card movement, animated as clones over the page
+src/js/sound.js          sound effects, pooled and mutable
+src/audio/               the clips themselves
 src/js/elo.js            rating model, mirrored by finish_game()
 src/js/db.js             every Supabase call lives here
 src/js/game.js           table rendering, input, stale-write retry
 src/js/{app,auth,lobby,leaderboard,ui}.js
 supabase/schema.sql      tables, RLS, RPCs, rating maths
+supabase/migration-*.sql run these only if you already ran an older schema.sql
 tests/engine.test.mjs    playouts at 2, 3 and 4 players
 tests/sync.test.mjs      SQL contract, concurrency, rating behaviour
 ```
@@ -227,3 +259,18 @@ GitHub Pages is free. Supabase's free tier covers 500 MB of database, 50,000
 monthly active users, and 200 concurrent realtime connections, far more than a
 friend group will use. The one thing to watch is that Supabase pauses free
 projects after a week with no activity; opening the dashboard wakes it up.
+
+## Sound
+
+Five short clips in `src/audio/`, played from `src/js/sound.js`: a card landing,
+cards being drawn, the table being gathered up, and a result each way. Each clip
+keeps a small pool of audio elements, because two cards can land close enough
+together that one element cannot overlap itself.
+
+Browsers refuse to play anything until the person has interacted with the page,
+so the first click is used to prime the clips rather than to play them. The
+Sound button on the table toggles them off, and the preference is remembered.
+
+To swap a clip, drop a replacement into `src/audio/` under the same name and
+rebuild. Anything a browser can play works; the files there are mono MP3 because
+Ogg is unreliable in Safari.

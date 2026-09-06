@@ -13,7 +13,7 @@ create table if not exists public.profiles (
   username   text unique not null
              check (char_length(username) between 3 and 20
                     and username ~ '^[A-Za-z0-9_ -]+$'),
-  rating     numeric(7,2) not null default 100,
+  rating     int  not null default 500,
   wins       int  not null default 0,
   losses     int  not null default 0,
   draws      int  not null default 0,
@@ -34,7 +34,7 @@ create policy "create own profile"
   on public.profiles for insert
   with check (
     auth.uid() = id
-    and rating = 100 and wins = 0 and losses = 0 and draws = 0
+    and rating = 500 and wins = 0 and losses = 0 and draws = 0
   );
 
 -- Deliberately no UPDATE policy: ratings move only inside finish_game().
@@ -111,12 +111,19 @@ create trigger games_touch_updated_at
 
 -- ------------------------------------------------------------- leaderboard --
 
-create or replace view public.leaderboard
+-- The ladder answers one question: how good is this player, and how often do
+-- they end up holding the cards. Nothing else belongs on it.
+drop view if exists public.leaderboard;
+create view public.leaderboard
 with (security_invoker = on) as
-  select id, username, rating, wins, losses, draws
+  select
+    id,
+    username,
+    rating,
+    round(100.0 * losses / nullif(wins + losses + draws, 0))::int as durak_rate
   from public.profiles
   where wins + losses + draws > 0
-  order by rating desc, wins desc;
+  order by rating desc, durak_rate asc, username;
 
 -- --------------------------------------------------------------- functions --
 
@@ -352,9 +359,9 @@ returns public.games
 language plpgsql security definer set search_path = public
 as $$
 declare
-  k          constant numeric := 10;    -- keep in step with src/js/elo.js
+  k          constant numeric := 40;    -- keep in step with src/js/elo.js
   scale      constant numeric := 200;
-  floor_at   constant numeric := 0;
+  floor_at   constant int     := 0;
   loss_bias  constant numeric := 1;     -- >1 destroys points; see README
   me         uuid := auth.uid();
   row        public.games;
@@ -365,11 +372,18 @@ declare
   claimed    int;
   seats      int[];
   ids        uuid[];
-  ratings    numeric[];
-  deltas     numeric[];
+  ratings    int[];
+  raw        numeric[];
+  deltas     int[];
   expected   numeric;
   actual     numeric;
-  d          numeric;
+  survivors  int;
+  residual   int;
+  step       int;
+  best       int;
+  best_want  numeric;
+  want       numeric;
+  guard      int;
   i          int;
   j          int;
   durak_uuid uuid;
@@ -425,7 +439,8 @@ begin
   end if;
   perform 1 from profiles where id = any(ids) for update;
 
-  deltas := array_fill(0::numeric, array[n]);
+  raw    := array_fill(0::numeric, array[n]);
+  deltas := array_fill(0, array[n]);
 
   for i in 1..n loop
     expected := 0;
@@ -444,17 +459,51 @@ begin
       actual := (1 + 0.5 * (n - 2)) / (n - 1);
     end if;
 
-    d := k * (actual - expected);
-    if seats[i] = p_durak_seat and d < 0 then
-      d := d * loss_bias;
+    raw[i] := k * (actual - expected);
+    if seats[i] = p_durak_seat and raw[i] < 0 then
+      raw[i] := raw[i] * loss_bias;
     end if;
-    d := round(d, 2);
+    deltas[i] := round(raw[i])::int;
+  end loop;
 
-    -- Nobody drops below the floor.
-    if ratings[i] + d < floor_at then
-      d := round(floor_at - ratings[i], 2);
+  -- Ratings are whole numbers, and rounding each share separately would not add
+  -- back up. Survivors keep their clean numbers and the durak takes the
+  -- remainder. On a draw there is nobody to absorb it, so nudge whichever
+  -- entries were rounded furthest from their exact value.
+  if p_durak_seat <> -1 then
+    survivors := 0;
+    for i in 1..n loop
+      if seats[i] <> p_durak_seat then survivors := survivors + deltas[i]; end if;
+    end loop;
+    for i in 1..n loop
+      if seats[i] = p_durak_seat then deltas[i] := -survivors; end if;
+    end loop;
+  else
+    residual := 0;
+    for i in 1..n loop residual := residual + deltas[i]; end loop;
+    guard := 0;
+    while residual <> 0 and guard < 100 loop
+      guard := guard + 1;
+      step := case when residual > 0 then -1 else 1 end;
+      best := 1;
+      best_want := -1000000;
+      for i in 1..n loop
+        want := step * (raw[i] - deltas[i]);
+        if want > best_want then
+          best_want := want;
+          best := i;
+        end if;
+      end loop;
+      deltas[best] := deltas[best] + step;
+      residual := residual + step;
+    end loop;
+  end if;
+
+  -- Nobody drops below the floor.
+  for i in 1..n loop
+    if ratings[i] + deltas[i] < floor_at then
+      deltas[i] := floor_at - ratings[i];
     end if;
-    deltas[i] := d;
   end loop;
 
   for i in 1..n loop
