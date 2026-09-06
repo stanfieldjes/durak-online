@@ -217,7 +217,11 @@ export function canPass(state, seat) {
 
 export function canTake(state, seat) {
   if (state.finished || state.taking) return false;
-  return seat === state.defender && !state.out[seat] && state.table.length > 0;
+  if (seat !== state.defender || state.out[seat]) return false;
+  // You take because you cannot answer an attack. Once every attack on the
+  // table is beaten there is nothing outstanding, so the option closes until
+  // somebody throws in another card.
+  return state.table.length > 0 && openSlots(state) > 0;
 }
 
 /** Can this seat do anything at all right now? */
@@ -491,7 +495,7 @@ export function viewFor(state, seat) {
 
 export function roleOf(state, seat) {
   if (state.out[seat]) return 'out';
-  if (seat === state.defender) return 'defending';
+  if (seat === state.defender) return state.taking ? 'taking' : 'defending';
   if (seat === state.attacker) return 'attacking';
   return 'throwing in';
 }
@@ -515,6 +519,11 @@ export function describe(state, seat) {
     return seat === state.attacker
       ? 'Your attack — lead a card.'
       : 'Waiting for the attacker to lead.';
+  }
+  if (state.taking) {
+    return state.passed[seat]
+      ? 'They are taking. Waiting for the other attackers.'
+      : 'They are taking — throw in anything that matches, then finish.';
   }
   if (state.passed[seat]) return 'You are done for this round.';
   return 'Throw in a matching rank, or pass.';

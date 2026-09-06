@@ -195,6 +195,18 @@ body {
 .btn--primary:hover:not(:disabled) { background: var(--red-bright); border-color: var(--red-bright); }
 .btn--primary:disabled { background: #4a1a20; border-color: #4a1a20; color: #9c8085; }
 
+/* Shown but plainly no longer needed, so beating everything reads as a win
+   rather than the option silently disappearing. */
+.btn--spent {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.18);
+  color: rgba(255, 255, 255, 0.38);
+  font-weight: 500;
+  text-decoration: line-through;
+}
+
+.btn--spent:hover { background: transparent; border-color: rgba(255, 255, 255, 0.18); }
+
 .btn--quiet { color: var(--chalk-rail); border-color: transparent; }
 .btn--quiet:hover { color: var(--chalk); }
 
@@ -398,11 +410,26 @@ body {
 .btn--corner { padding: 0.3rem 0.7rem; color: rgba(255, 255, 255, 0.6); }
 .btn--corner:hover { color: #fff; background: rgba(0, 0, 0, 0.25); }
 
+/*
+  Seats are laid out as they would be around a table, with the user's own hand
+  at the bottom of the screen: one opponent sits opposite, two make a triangle,
+  three make a square with players to the left, opposite, and right.
+*/
 .opponents {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  grid-template-columns: repeat(3, 1fr);
   gap: 0.75rem;
+  align-items: start;
 }
+
+.opponents[data-count="1"] > .player { grid-column: 2; }
+
+.opponents[data-count="2"] > .player:nth-child(1) { grid-column: 1; }
+.opponents[data-count="2"] > .player:nth-child(2) { grid-column: 3; }
+
+.opponents[data-count="3"] > .player:nth-child(1) { grid-column: 1; grid-row: 2; }
+.opponents[data-count="3"] > .player:nth-child(2) { grid-column: 2; grid-row: 1; }
+.opponents[data-count="3"] > .player:nth-child(3) { grid-column: 3; grid-row: 2; }
 
 .player {
   border: 1px solid var(--table-line);
@@ -417,6 +444,9 @@ body {
 .player--defending { border-color: var(--red); }
 .player--attacking { border-color: #fff; }
 .player--acting { box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.5); }
+
+.player--taking { border-color: var(--red); border-style: dashed; }
+.player--taking .player__role { color: var(--red-soft); font-weight: 500; }
 
 .player--out { border-color: #0a2e1d; background: rgba(0, 0, 0, 0.45); color: #6e837a; }
 .player--out .player__rating, .player--out .player__role { color: #6e837a; }
@@ -439,16 +469,13 @@ body {
   border-block: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-/* Stock on the left, trump card face up beside it — never covered. */
-.stock { display: flex; align-items: center; gap: 0.45rem; }
-
-.stock__pile {
-  position: relative;
+/* A face-down pile of cards: the stock, and the beaten pile beside it. */
+.pile {
   width: var(--card-w);
   height: var(--card-h);
   border-radius: var(--radius);
-  background: repeating-linear-gradient(45deg, #14181c 0 6px, #0c1013 6px 12px);
   border: 1px solid #000;
+  background: repeating-linear-gradient(45deg, #14181c 0 6px, #0c1013 6px 12px);
   display: grid;
   place-items: center;
   font-weight: 700;
@@ -456,10 +483,45 @@ body {
   color: var(--chalk);
 }
 
-.stock__pile[data-empty="true"] { background: rgba(0, 0, 0, 0.2); border-style: dashed; color: #6e837a; }
+/* Angled the other way and warmer, so the two piles never read as the same. */
+.pile--discard { background: repeating-linear-gradient(-45deg, #2a1416 0 6px, #1c0e10 6px 12px); }
 
-.stock__trump .card { transform: rotate(6deg); }
-.card--drawn { box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.35); }
+.pile__label { font-size: var(--step--1); color: var(--chalk-dim); }
+
+/*
+  The trump card lies under the stock, turned side on, the way it sits on a real
+  table. The stock covers its left end; the corner carrying the rank and suit
+  ends up on the exposed right, so the suit stays readable all game.
+
+  The card is rotated about its own centre, so its rotated box spans
+  card-h wide and card-w tall around that centre. The offsets below place that
+  box to stick out to the right of the stock and sit vertically centred.
+*/
+.stock {
+  position: relative;
+  width: calc(var(--card-w) * 1.75);
+  height: var(--card-h);
+}
+
+.stock__trump {
+  position: absolute;
+  left: calc(var(--card-w) * 0.475);
+  top: 0;
+  z-index: 1;
+}
+
+.stock__trump .card { transform: rotate(90deg); }
+
+.stock__pile { position: absolute; left: 0; top: 0; z-index: 2; }
+
+.stock__pile[data-empty="true"] {
+  background: rgba(0, 0, 0, 0.25);
+  border-style: dashed;
+  color: #6e837a;
+}
+
+/* Once the stock is gone the trump card has been drawn by somebody. */
+.card--drawn { filter: brightness(0.82); }
 
 .slots {
   display: flex;
@@ -484,7 +546,7 @@ body {
   border-radius: 7px;
 }
 
-.discard { color: var(--chalk-dim); font-size: var(--step--1); text-align: right; }
+.discard { display: grid; justify-items: center; gap: 0.3rem; }
 
 .felt__bottom { display: grid; gap: 0.8rem; justify-items: center; }
 
@@ -669,6 +731,10 @@ button.card.is-selected {
   .discard { grid-column: 2; text-align: center; }
   .masthead { flex-wrap: wrap; }
   .opponents { grid-template-columns: 1fr 1fr; }
+  .opponents[data-count="1"] > .player { grid-column: 1 / -1; }
+  .opponents[data-count="3"] > .player:nth-child(2) { grid-column: 1 / -1; grid-row: 1; }
+  .opponents[data-count="3"] > .player:nth-child(1) { grid-column: 1; grid-row: 2; }
+  .opponents[data-count="3"] > .player:nth-child(3) { grid-column: 2; grid-row: 2; }
   .player__role { margin-left: 0; width: 100%; }
   .seats-picker legend { line-height: 1.6; }
 }

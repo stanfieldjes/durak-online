@@ -388,8 +388,11 @@ function renderOpponents() {
   const box = $('#opponents');
   clear(box);
 
+  // Seats run clockwise from ours, so the player who acts after us sits on the
+  // left and the layout closes back round to our own hand at the bottom.
   const order = [];
   for (let i = 1; i < state.playerCount; i++) order.push((mySeat + i) % state.playerCount);
+  box.dataset.count = String(order.length);
 
   for (const seat of order) {
     const profile = profileAt(seat);
@@ -419,6 +422,7 @@ function renderOpponents() {
       : state.passed[seat] && seat !== state.defender
         ? 'done'
         : roleOf(state, seat);
+    if (seat === state.defender && state.taking) panel.classList.add('player--taking');
 
     head.append(name, rating, role);
 
@@ -545,7 +549,18 @@ function renderPrompt() {
 
 function renderActions() {
   const live = !busy && !state.finished && !state.out[mySeat];
-  show($('#act-take'), live && canTake(state, mySeat));
+
+  // Keep the take button on screen for the whole defence and fade it once every
+  // attack is beaten, so holding the line reads as an achievement rather than
+  // the option quietly vanishing.
+  const defending = live && mySeat === state.defender && state.table.length > 0 && !state.taking;
+  const takeable = canTake(state, mySeat);
+  const take = $('#act-take');
+  show(take, defending);
+  take.disabled = !takeable;
+  take.classList.toggle('btn--spent', defending && !takeable);
+  take.title = takeable ? '' : 'Everything is beaten — you do not have to take.';
+
   show($('#act-pass'), live && canPass(state, mySeat));
 }
 

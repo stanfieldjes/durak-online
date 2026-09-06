@@ -21,13 +21,16 @@
 
     <div class="felt__middle">
       <div class="stock" id="stock">
-        <div class="stock__pile" id="deck-pile"><span id="deck-count">0</span></div>
         <div class="stock__trump" id="trump-card"></div>
+        <div class="pile stock__pile" id="deck-pile"><span id="deck-count">0</span></div>
       </div>
 
       <div class="slots" id="slots" aria-label="Cards in play"></div>
 
-      <div class="discard" id="discard" hidden><span id="discard-count">0</span> beaten</div>
+      <div class="discard" id="discard" hidden>
+        <div class="pile pile--discard"><span id="discard-count">0</span></div>
+        <span class="pile__label">beaten</span>
+      </div>
     </div>
 
     <div class="felt__bottom">
