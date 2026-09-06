@@ -8,8 +8,9 @@ import {
   describe,
   roleOf,
   sameCard,
-  cardId,
+  rankValue,
   newGame,
+  SUITS,
   SUIT_GLYPH,
   IllegalMove,
 } from './durak.js';
@@ -441,13 +442,14 @@ function renderOpponents() {
 }
 
 function renderStock() {
-  // The trump card sits face up beside the stock for the whole game, so the
-  // suit is never something anyone has to remember.
+  // The trump card is the bottom card of the stock and is dealt out like any
+  // other, so it leaves the table once the stock runs dry. The label in the
+  // bar above keeps the suit on screen after that.
   const trumpBox = $('#trump-card');
   clear(trumpBox);
-  const trumpCard = cardEl(state.trumpCard, { trump: state.trump });
-  if (state.deck.length === 0) trumpCard.classList.add('card--drawn');
-  trumpBox.append(trumpCard);
+  if (state.deck.length > 0) {
+    trumpBox.append(cardEl(state.trumpCard, { trump: state.trump }));
+  }
 
   const pile = $('#deck-pile');
   pile.dataset.empty = String(state.deck.length === 0);
@@ -534,11 +536,19 @@ function renderHand() {
   }
 }
 
+/**
+ * Hand order: lowest on the left, highest on the right, trumps held apart at
+ * the right-hand end where they are easy to find and hard to play by accident.
+ */
 function byTrumpThenRank(a, b) {
   const trump = state.trump;
-  if ((a.s === trump) !== (b.s === trump)) return a.s === trump ? 1 : -1;
-  if (a.s !== b.s) return a.s.localeCompare(b.s);
-  return cardId(a).localeCompare(cardId(b));
+  const aTrump = a.s === trump;
+  const bTrump = b.s === trump;
+  if (aTrump !== bTrump) return aTrump ? 1 : -1;
+
+  const byRank = rankValue(a.r) - rankValue(b.r);
+  if (byRank !== 0) return byRank;
+  return SUITS.indexOf(a.s) - SUITS.indexOf(b.s);
 }
 
 function renderPrompt() {
@@ -594,7 +604,13 @@ async function showResult() {
   else title = 'You got out.';
 
   setText($('#result-title'), title);
-  setText($('#result-elo'), numeric === null ? '' : `${formatRatingDelta(numeric)} rating`);
+
+  // Losing points reads red even on the result screen — a green figure beside
+  // "You are the durak" was giving the wrong impression at a glance.
+  const figure = $('#result-elo');
+  setText(figure, numeric === null ? '' : `${formatRatingDelta(numeric)} rating`);
+  figure.classList.toggle('delta--down', numeric !== null && numeric < 0);
+  figure.classList.toggle('delta--up', numeric !== null && numeric > 0);
 
   // finish_game() has already written these ratings, so they are final. The
   // delta is shown beside them for context, NOT added to them — doing both is

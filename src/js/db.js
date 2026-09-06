@@ -23,7 +23,10 @@ export async function createProfile(userId, username) {
 }
 
 export async function getLeaderboard(limit = 50) {
-  const { data, error } = await supabase.from('leaderboard').select('*').limit(limit);
+  const { data, error } = await supabase
+    .from('leaderboard')
+    .select('id, username, rating, durak_rate')
+    .limit(limit);
   if (error) throw error;
   return data ?? [];
 }

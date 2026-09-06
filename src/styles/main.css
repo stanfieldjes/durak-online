@@ -520,9 +520,6 @@ body {
   color: #6e837a;
 }
 
-/* Once the stock is gone the trump card has been drawn by somebody. */
-.card--drawn { filter: brightness(0.82); }
-
 .slots {
   display: flex;
   flex-wrap: wrap;
@@ -596,13 +593,16 @@ body {
   border-color: #000;
 }
 
-.card--trump-mark::after {
-  content: '';
-  position: absolute;
-  inset: auto 0 0 0;
-  height: 3px;
-  background: var(--red);
-  border-radius: 0 0 var(--radius) var(--radius);
+/* Trumps are ringed in their own colour, so the suit that matters is obvious
+   without having to read every card. */
+.card--trump {
+  border-color: var(--ink);
+  box-shadow: inset 0 0 0 2px var(--ink);
+}
+
+.card--trump.card--red {
+  border-color: var(--red);
+  box-shadow: inset 0 0 0 2px var(--red);
 }
 
 /* Dead cards are darkened, not faded. Hands overlap, and stacked transparency
@@ -615,7 +615,16 @@ body {
 }
 
 .card--dim.card--red { color: var(--card-dead-red); }
-.card--dim.card--trump-mark::after { background: var(--card-dead-red); }
+
+.card--dim.card--trump {
+  border-color: var(--card-dead-ink);
+  box-shadow: inset 0 0 0 2px var(--card-dead-ink);
+}
+
+.card--dim.card--trump.card--red {
+  border-color: var(--card-dead-red);
+  box-shadow: inset 0 0 0 2px var(--card-dead-red);
+}
 
 button.card { font-family: inherit; cursor: pointer; padding: calc(var(--card-w) * 0.09); }
 button.card:disabled { cursor: default; }
@@ -625,6 +634,16 @@ button.card.is-playable:focus-visible {
   transform: translateY(-14px);
   box-shadow: 0 10px 22px rgba(0, 0, 0, 0.55);
   z-index: 2;
+}
+
+button.card--trump.is-playable:hover,
+button.card--trump.is-playable:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--ink), 0 10px 22px rgba(0, 0, 0, 0.55);
+}
+
+button.card--trump.card--red.is-playable:hover,
+button.card--trump.card--red.is-playable:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--red), 0 10px 22px rgba(0, 0, 0, 0.55);
 }
 
 button.card.is-selected {
@@ -667,7 +686,15 @@ button.card.is-selected {
 }
 
 .result__title { font-size: var(--step-3); margin: 0; }
-.result__elo { color: var(--green-bright); font-size: var(--step-1); font-variant-numeric: tabular-nums; margin: 0 0 1rem; }
+.result__elo {
+  color: var(--chalk-dim);
+  font-size: var(--step-1);
+  font-variant-numeric: tabular-nums;
+  margin: 0 0 1rem;
+}
+
+.result__elo.delta--up { color: var(--green-bright); }
+.result__elo.delta--down { color: var(--red-soft); }
 
 .result__table {
   list-style: none;
@@ -703,6 +730,7 @@ button.card.is-selected {
 .ranks th { color: var(--chalk-rail); font-weight: 500; font-size: var(--step--1); }
 .ranks tbody tr.is-me { background: rgba(200, 16, 46, 0.16); }
 .ranks .rating { color: var(--green-bright); font-weight: 700; }
+.ranks .durak-rate { color: var(--red-soft); }
 
 /* ---------- toast ---------- */
 

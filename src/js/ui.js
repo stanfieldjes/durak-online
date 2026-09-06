@@ -40,7 +40,7 @@ export function cardEl(card, { interactive = false, trump = null, faceDown = fal
 
   const isRed = card.s === 'H' || card.s === 'D';
   if (isRed) el.classList.add('card--red');
-  if (trump && card.s === trump) el.classList.add('card--trump-mark');
+  if (trump && card.s === trump) el.classList.add('card--trump');
 
   const rank = document.createElement('span');
   rank.className = 'card__rank';

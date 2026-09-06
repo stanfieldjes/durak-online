@@ -6,9 +6,14 @@
  * onto a rating where losing hurts and winning is a modest bonus, because the
  * points the durak drops are split among all the survivors.
  *
- *   4 players, all rated equally:  durak −5.0,  each survivor +1.7
- *   3 players, all rated equally:  durak −5.0,  each survivor +2.5
- *   2 players, all rated equally:  durak −5.0,  the winner   +5.0
+ *   4 players, all rated equally:  durak −6,  each survivor +2
+ *   3 players, all rated equally:  durak −6,  each survivor +3
+ *   2 players, all rated equally:  durak −5,  the winner   +5
+ *
+ * Ratings and changes are whole numbers. Rounding each share separately would
+ * not add back up, so the survivors take clean numbers and the durak absorbs
+ * whatever is left over — which suits a game whose whole point is that one
+ * player carries the loss.
  *
  * The scale is asymmetric in the same direction. At a 4-player table, being
  * the durak a quarter of the time settles you at exactly 100. Dropping to 40%
@@ -63,49 +68,87 @@ export function actualScore(n, seat, durakSeat) {
   return (1 + 0.5 * (n - 2)) / (n - 1);
 }
 
+/** Half away from zero, matching Postgres `round()` on numerics. */
+export function roundHalfAway(x) {
+  return Math.sign(x) * Math.round(Math.abs(x));
+}
+
+/**
+ * Nudge whole-number deltas until they sum to zero again, moving whichever
+ * entries were rounded furthest from their exact value. Used for draws, where
+ * there is no durak to absorb the remainder.
+ */
+function balanceResidual(deltas, raw) {
+  let residual = deltas.reduce((a, b) => a + b, 0);
+  let guard = 0;
+  while (residual !== 0 && guard++ < 100) {
+    const step = residual > 0 ? -1 : 1;
+    let best = 0;
+    let bestWant = -Infinity;
+    for (let i = 0; i < deltas.length; i++) {
+      const want = step * (raw[i] - deltas[i]);
+      if (want > bestWant) {
+        bestWant = want;
+        best = i;
+      }
+    }
+    deltas[best] += step;
+    residual += step;
+  }
+}
+
 /**
  * Rating changes for one finished game.
  *
  * @param {number[]} ratings   current rating per seat
  * @param {number}   durakSeat seat of the fool, or -1 for a draw
- * @returns {number[]}         change per seat, to two decimals
+ * @returns {number[]}         whole-number change per seat, summing to zero
  */
 export function ratingChanges(ratings, durakSeat, lossBias = LOSS_BIAS) {
   const n = ratings.length;
-  const deltas = [];
+  const raw = [];
 
   for (let seat = 0; seat < n; seat++) {
     const expected = expectedScore(ratings, seat);
     const actual = actualScore(n, seat, durakSeat);
     let delta = K * (actual - expected);
     if (seat === durakSeat && delta < 0) delta *= lossBias;
-    deltas.push(round2(delta));
+    raw.push(delta);
+  }
+
+  const deltas = raw.map(roundHalfAway);
+
+  if (durakSeat >= 0 && durakSeat < n) {
+    let survivors = 0;
+    for (let seat = 0; seat < n; seat++) if (seat !== durakSeat) survivors += deltas[seat];
+    deltas[durakSeat] = -survivors;
+  } else {
+    balanceResidual(deltas, raw);
   }
 
   // Do not push anyone below the floor.
   for (let seat = 0; seat < n; seat++) {
-    const floored = Math.max(FLOOR, round2(ratings[seat] + deltas[seat]));
-    deltas[seat] = round2(floored - ratings[seat]);
+    deltas[seat] = Math.max(FLOOR, ratings[seat] + deltas[seat]) - ratings[seat];
   }
 
   return deltas;
 }
 
-export function round2(x) {
-  return Math.round(x * 100) / 100;
-}
-
-/** For display: "+1.7", "−5", "0". */
+/** For display: "+2", "−6", "0". */
 export function formatRatingDelta(delta) {
   if (delta === null || delta === undefined) return '—';
-  const rounded = Math.round(delta * 10) / 10;
-  if (rounded === 0) return '0';
-  const sign = rounded > 0 ? '+' : '\u2212';
-  return sign + Math.abs(rounded);
+  const n = Math.round(Number(delta));
+  if (n === 0) return '0';
+  return (n > 0 ? '+' : '\u2212') + Math.abs(n);
 }
 
-/** For display: ratings are stored precise but read better as whole numbers. */
 export function formatRating(rating) {
   if (rating === null || rating === undefined) return '—';
-  return String(Math.round(rating));
+  return String(Math.round(Number(rating)));
+}
+
+/** For display: "24%" of games ended with this player holding the cards. */
+export function formatDurakRate(rate) {
+  if (rate === null || rate === undefined) return '—';
+  return `${Math.round(Number(rate))}%`;
 }
