@@ -60,6 +60,7 @@ let mySeat = null;
 let selected = null;
 let unwatch = null;
 let sending = false;
+let settling = false;
 let resultShown = false;
 let resultTimer = null;
 let dealing = false;    // opening hands still flying out
@@ -194,6 +195,7 @@ function reset() {
   mySeat = null;
   selected = null;
   sending = false;
+  settling = false;
   resultShown = false;
   show($('#result'), false);
   show($('#waiting'), false);
@@ -549,7 +551,16 @@ async function drain() {
  */
 async function maybeSettle() {
   const over = state?.finished || game?.status === 'finished';
-  if (!over || resultShown || resultTimer) return;
+  if (!over || resultShown || resultTimer || settling) return;
+
+  // Set synchronously, before any await below. The two awaits here yield
+  // control back to the event loop, and this function can genuinely be
+  // called again in that window — the drain loop's own cleanup and a
+  // realtime echo of the same winning move both call it within milliseconds
+  // of each other. Without a flag set before either await, a second call
+  // would see resultTimer still unset and play the win/loss sound a second
+  // time on top of the first.
+  settling = true;
 
   if (game.status !== 'finished' && state?.finished) {
     try {

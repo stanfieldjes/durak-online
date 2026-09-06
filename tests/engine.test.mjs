@@ -351,6 +351,48 @@ console.log('Checking that a live opponent elsewhere at the table blocks a force
   }
 }
 
+console.log('Checking that defending the last card ends the game without a pass click...');
+{
+  // The exact scenario reported: defender plays their last card, it beats the
+  // only open attack, the deck is empty, and the OTHER player still holds
+  // cards. Nobody can throw in anything more — the defender has nothing left
+  // to receive it — so this must resolve immediately rather than wait on the
+  // attacker to click "done" for a choice they no longer have.
+  for (const players of [2, 3, 4]) {
+    let s = newGame(2, players);
+    s = { ...s, deck: [], table: [], discard: 30 };
+    s.attacker = 1; s.defender = 0; s.trump = 'S';
+    s.out = s.out.map(() => false);
+    // Nobody has explicitly passed — proving this does not depend on it.
+    s.passed = s.passed.map(() => false);
+    s.hands[0] = [{ r: '8', s: 'D' }]; // exactly the defender's last card
+    s.table = [{ atk: { r: '6', s: 'D' }, def: null }];
+    s.hands[1] = [{ r: '6', s: 'C' }, { r: '7', s: 'C' }]; // the attacker still holds cards
+    for (let seat = 2; seat < players; seat++) s.hands[seat] = [];
+
+    const after = applyMove(s, 0, { type: 'defend', card: { r: '8', s: 'D' }, slot: 0 });
+    check(`${players}p: the game ends the instant the last card lands`, after.finished);
+    check(`${players}p: the defender wins, the still-loaded opponent is the durak`,
+      after.durak === 1);
+  }
+
+  // The same shape, but the OTHER player has also emptied their hand: this is
+  // the draw case from earlier, and it must still resolve immediately too —
+  // the fix only changes WHEN it resolves, not what it decides.
+  {
+    let s = newGame(2, 2);
+    s = { ...s, deck: [], table: [], discard: 30 };
+    s.attacker = 1; s.defender = 0; s.trump = 'S';
+    s.out = [false, false]; s.passed = [false, false];
+    s.hands[0] = [{ r: '8', s: 'D' }];
+    s.table = [{ atk: { r: '6', s: 'D' }, def: null }];
+    s.hands[1] = [];
+    const after = applyMove(s, 0, { type: 'defend', card: { r: '8', s: 'D' }, slot: 0 });
+    check('a simultaneous empty-hand finish is still a draw, resolved immediately',
+      after.finished && after.draw);
+  }
+}
+
 /* ---- forced endings and the draw that survives them ------------------- */
 
 console.log('Checking forced endings...');

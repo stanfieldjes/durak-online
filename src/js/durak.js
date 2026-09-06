@@ -458,9 +458,22 @@ function illegalAttackReason(state, seat) {
   return 'You can only throw in a rank already on the table.';
 }
 
-/** A round closes once no attacker wants to add anything more. */
+/**
+ * A round closes once no attacker wants to add anything more — except when
+ * the defender's hand has just hit zero while everything is beaten. At that
+ * point nothing more can be thrown in by anyone, no matter what they hold:
+ * there is no defender's hand left to receive it, so attack capacity is zero
+ * by construction. That is a hard constraint, not a choice being deferred,
+ * so it resolves immediately rather than waiting on "done" clicks that could
+ * never change the outcome.
+ */
 function maybeEndRound(state) {
   if (state.table.length === 0) return state;
+
+  if (!state.taking && openSlots(state) === 0 && state.hands[state.defender].length === 0) {
+    return resolveBeaten(state);
+  }
+
   if (!allAttackersPassed(state)) return state;
   if (state.taking) return resolveTake(state);
   if (openSlots(state) === 0) return resolveBeaten(state);
