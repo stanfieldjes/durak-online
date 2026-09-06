@@ -15,6 +15,7 @@ const STORAGE_KEY = 'durak:muted';
 const CLIPS = {
   play: { file: 'play_card.mp3', volume: 0.7 },
   gather: { file: 'pickup_or_discard.mp3', volume: 0.6 },
+  takeDeclared: { file: 'take_declared.mp3', volume: 0.7 },
   start: { file: 'game_start.mp3', volume: 0.7 },
   win: { file: 'win.mp3', volume: 0.8 },
   loss: { file: 'loss.mp3', volume: 0.8 },

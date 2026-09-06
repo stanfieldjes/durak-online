@@ -8,6 +8,17 @@
  * before playing again.
  */
 
+/**
+ * Timing constants, exported so callers that need to know when an animation
+ * will finish — to reveal a hand only once its cards have actually landed,
+ * for instance — read the same numbers the animation itself uses instead of
+ * keeping a second, driftable copy.
+ */
+export const TABLE_CLEAR_MS = { collected: 340, discarded: 400 };
+export const TABLE_CLEAR_STAGGER_MS = 45;
+export const DRAW_FLIGHT_MS = 320;
+export const DRAW_STAGGER_MS = 70;
+
 let layer = null;
 
 function surface() {
@@ -73,8 +84,8 @@ export function flyTableAway(slotEls, target, { collected = false } = {}) {
     const copy = cloneAt(slot, box);
     host.append(copy);
     animate(copy, dx, dy, {
-      duration: collected ? 340 : 400,
-      delay: i * 45,
+      duration: collected ? TABLE_CLEAR_MS.collected : TABLE_CLEAR_MS.discarded,
+      delay: i * TABLE_CLEAR_STAGGER_MS,
       spin: collected ? -8 : 10,
       fade: 0,
       scale: collected ? 0.5 : 0.65,
@@ -106,8 +117,8 @@ export function flyDraw(stockEl, target, count) {
     host.append(copy);
 
     animate(copy, end.x - start.x, end.y - start.y, {
-      duration: 320,
-      delay: i * 70,
+      duration: DRAW_FLIGHT_MS,
+      delay: i * DRAW_STAGGER_MS,
       spin: 6,
       fade: 0.15,
       scale: 0.85,

@@ -344,16 +344,86 @@ export function applyMove(prev, seat, move) {
 }
 
 /**
+ * Can every open slot be matched to a distinct card in `hand` that beats it?
+ *
+ * Card count alone is not enough: holding exactly as many cards as there are
+ * open slots proves nothing if two slots both need a heart and the hand holds
+ * only one. This is bipartite matching — an augmenting-path search — but the
+ * boards involved are tiny (at most six slots, six cards), so a plain
+ * recursive search is instant and there is no need for anything cleverer.
+ */
+function canCoverAllSlots(hand, openAttacks, trump) {
+  const claimedBy = new Array(hand.length).fill(-1); // hand index -> slot it currently covers
+
+  function tryAssign(slotIndex, visited) {
+    for (let h = 0; h < hand.length; h++) {
+      if (visited[h] || !beats(hand[h], openAttacks[slotIndex], trump)) continue;
+      visited[h] = true;
+      if (claimedBy[h] === -1 || tryAssign(claimedBy[h], visited)) {
+        claimedBy[h] = slotIndex;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  for (let slot = 0; slot < openAttacks.length; slot++) {
+    if (!tryAssign(slot, new Array(hand.length).fill(false))) return false;
+  }
+  return true;
+}
+
+/**
+ * Is the position hopeless for the defender right now: stock empty, nobody
+ * left to add another attack, and nothing they do avoids ending up the durak?
+ * Exported so tests can check games against the same rule the engine itself
+ * uses, rather than a hand-rolled approximation of it.
+ *
+ * Two separate ways to be hopeless here, and only one of them is about which
+ * cards you hold:
+ *
+ * - Holding MORE cards than there are open attacks is hopeless on its own,
+ *   no matter what those cards are. Beating an attack removes exactly one
+ *   card; anything left over afterward means you are still holding cards
+ *   once the attacker runs out, which is the whole definition of durak. There
+ *   is nothing to check here — the arithmetic alone already decides it.
+ *
+ * - Holding EXACTLY as many cards as open attacks is where the specific
+ *   cards start to matter: beating everything would empty your hand at the
+ *   same moment as the attacker's, which is a draw. That is only reachable if
+ *   some arrangement of your hand actually covers every open attack — hence
+ *   the matching check, but only for this one exact-count case.
+ */
+export function isHopelessForDefender(state) {
+  if (state.deck.length > 0) return false;
+
+  const defender = state.defender;
+  const others = [];
+  for (let seat = 0; seat < state.playerCount; seat++) {
+    if (seat !== defender && !state.out[seat]) others.push(seat);
+  }
+  if (others.length === 0) return false;
+  if (!others.every((seat) => state.hands[seat].length === 0)) return false;
+
+  const openAttacks = state.table.filter((slot) => !slot.def).map((slot) => slot.atk);
+  if (openAttacks.length === 0) return false;
+
+  const hand = state.hands[defender];
+  if (hand.length > openAttacks.length) return true; // leftover cards either way — no need to check which ones
+  return !canCoverAllSlots(hand, openAttacks, state.trump);
+}
+
+/**
  * Stop a round that cannot change the result.
  *
  * Once the stock is empty and every attacker has played their last card, the
- * defender is the only player left holding anything. Beating an attack sheds
- * exactly one card, so the defender can only finish empty if their hand is
- * already down to the number of open attacks. Holding more than that, no line
- * of play saves them and there is nothing to ask about — they are the durak.
- *
- * Holding exactly that many, the round plays on, because beating everything
- * empties their hand too and the game is a draw.
+ * defender is the only player left holding anything, and no one is coming to
+ * add more attacks. Whatever they do next — defend or take — is already
+ * certain to leave them holding cards while nobody else does, unless their
+ * hand happens to exactly match the open attacks in both count and suit. See
+ * isHopelessForDefender() for the two ways that can fail. When it does fail,
+ * there is nothing left to ask them: they are the durak, without a "take"
+ * click needed to confirm what the arithmetic already decided.
  */
 function maybeForcedEnd(state) {
   if (state.finished || state.deck.length > 0) return state;
@@ -365,7 +435,8 @@ function maybeForcedEnd(state) {
   }
   if (others.length === 0) return state;
   if (!others.every((seat) => state.hands[seat].length === 0)) return state;
-  if (state.hands[defender].length <= openSlots(state)) return state;
+
+  if (!isHopelessForDefender(state)) return state;
 
   for (const seat of others) {
     state.out[seat] = true;

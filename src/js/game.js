@@ -8,6 +8,7 @@ import {
   describe,
   roleOf,
   sameCard,
+  cardId,
   rankValue,
   newGame,
   HAND_SIZE,
@@ -30,7 +31,17 @@ import {
 import { readableError } from './supabase.js';
 import { session } from './auth.js';
 import { formatRatingDelta, formatRating } from './elo.js';
-import { flyTableAway, flyDraw, flyDeal, clearEffects, reducedMotion } from './fx.js';
+import {
+  flyTableAway,
+  flyDraw,
+  flyDeal,
+  clearEffects,
+  reducedMotion,
+  TABLE_CLEAR_MS,
+  TABLE_CLEAR_STAGGER_MS,
+  DRAW_FLIGHT_MS,
+  DRAW_STAGGER_MS,
+} from './fx.js';
 import { play as playSound, isMuted, toggleMuted } from './sound.js';
 import { $, show, setText, clear, toast, cardEl } from './ui.js';
 
@@ -54,7 +65,36 @@ let resultTimer = null;
 let dealing = false;    // opening hands still flying out
 let dealPlayed = false; // only deal once per visit to a table
 let dealTimers = [];
-let dealt = [];         // cards landed so far, per seat
+
+/**
+ * How far into the position's log sound and animation have already reacted.
+ *
+ * present() can be called more than once for data that overlaps — our own
+ * move gets applied locally, then confirmed by its own RPC response, then
+ * echoed again by realtime, and those three arrivals are not guaranteed to
+ * happen in a tidy order. Comparing two arbitrary state objects to decide
+ * "is this new" is fragile under that kind of race. Counting log entries we
+ * have already announced is not: every entry is reacted to exactly once,
+ * ever, regardless of how many times present() runs or in what order.
+ */
+let announcedThrough = 0;
+
+/**
+ * Per-seat set of card ids currently hidden from display: they exist in
+ * state.hands[seat] but their flight animation has not landed yet, so they
+ * should not appear until it has. undefined/empty means nothing is hidden.
+ *
+ * Tracked by card identity rather than by "first N cards shown" on purpose.
+ * Playing a move is not blocked by an animation elsewhere — a player can act
+ * on an already-visible card while one of their own cards is still mid-air
+ * from the previous round's refill — and that play splices the array,
+ * shifting everything after it left. An index-based cap would let the still-
+ * hidden card slide into a now-shorter "revealed" prefix and appear early.
+ * An identity-based set is immune to that: removing an unrelated card from
+ * the array never changes which specific cards are still marked hidden.
+ */
+let hidden = [];
+let revealTimers = [];
 
 export function initGame() {
   $('#act-take').addEventListener('click', () => play({ type: 'take' }));
@@ -142,7 +182,10 @@ function reset() {
   dealTimers = [];
   dealing = false;
   dealPlayed = false;
-  dealt = [];
+  announcedThrough = 0;
+  revealTimers.forEach(clearTimeout);
+  revealTimers = [];
+  hidden = [];
   clearEffects();
   game = null;
   confirmed = null;
@@ -217,7 +260,9 @@ function advanceLocally(move) {
 
 /**
  * Show a new position: fire the effects for whatever just happened, then
- * render immediately. Effects animate clones, so rendering does not wait.
+ * render immediately. Effects animate clones, so rendering does not wait —
+ * except for a hand a card is actively flying toward, which is held back by
+ * `revealed` until the animation lands (see runEffects and release()).
  */
 function present(previous, next) {
   // A position at version 0 is a table that has just been dealt.
@@ -226,14 +271,27 @@ function present(previous, next) {
   if (opening) {
     dealPlayed = true;
     dealing = true;
+    announcedThrough = next.log.length; // the deal itself needs no reaction
   } else {
-    const events = newEvents(previous, next);
+    const events = takeNewEvents(next);
     if (previous && next && events.length) runEffects(previous, next, events);
   }
 
   state = next;
   render();
   if (opening) startDeal();
+}
+
+/**
+ * Log entries not yet reacted to. Consuming them advances `announcedThrough`
+ * immediately, so calling this twice for the same data returns nothing the
+ * second time — that is what makes sound and animation idempotent.
+ */
+function takeNewEvents(next) {
+  if (!next?.log || next.log.length <= announcedThrough) return [];
+  const events = next.log.slice(announcedThrough);
+  announcedThrough = next.log.length;
+  return events;
 }
 
 /**
@@ -245,7 +303,9 @@ function present(previous, next) {
  */
 function startDeal() {
   playSound('start');
-  dealt = new Array(state.playerCount).fill(0);
+  // Everyone's whole opening hand starts hidden; each card's own timer below
+  // reveals it — by identity, in deal order — as its clone lands.
+  hidden = state.hands.map((hand) => new Set(hand.map(cardId)));
 
   requestAnimationFrame(() => {
     if (!state) return;
@@ -260,19 +320,21 @@ function startDeal() {
     });
 
     if (!total) {          // reduced motion, or nothing measurable to fly from
-      dealt = state.hands.map((hand) => hand.length);
+      hidden = [];
       dealing = false;
       render();
       return;
     }
 
-    // Reveal each card as its clone arrives.
+    // hands[seat][round] is exactly the card dealt to that seat in that round
+    // — newGame() deals one card per seat per round, in this same order.
     let index = 0;
     for (let round = 0; round < HAND_SIZE; round++) {
       for (const seat of order) {
+        const id = cardId(state.hands[seat][round]);
         const at = index * DEAL_GAP_MS + DEAL_FLIGHT_MS;
         dealTimers.push(setTimeout(() => {
-          dealt[seat] += 1;
+          hidden[seat]?.delete(id);
           render();
         }, at));
         index++;
@@ -280,56 +342,118 @@ function startDeal() {
     }
 
     dealTimers.push(setTimeout(() => {
+      hidden = [];
       dealing = false;
       render();
     }, total + 60));
   });
 }
 
-function newEvents(previous, next) {
-  if (!previous?.log || !next?.log) return [];
-  if (next.log.length <= previous.log.length) return [];
-  return next.log.slice(previous.log.length);
-}
-
 /* ------------------------------------------------------------------ */
 /* effects                                                             */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Hide the specific cards a seat just gained until their flight lands.
+ *
+ * The new cards are exactly the tail of `nextHand` beyond `previousHand`'s
+ * length: a gain transition (taking the table, or refilling from the stock)
+ * only ever appends, so this slice is reliable at the moment the transition
+ * is detected, before anything else has a chance to touch the array.
+ */
+function holdBack(seat, previousHand, nextHand) {
+  const arriving = nextHand.slice(previousHand.length);
+  if (arriving.length === 0) return;
+  if (!hidden[seat]) hidden[seat] = new Set();
+  for (const card of arriving) hidden[seat].add(cardId(card));
+}
+
+/** Let a seat's hand show everything actually in it again. */
+function release(seat) {
+  hidden[seat] = undefined;
+  render();
+}
+
 function runEffects(previous, next, events) {
   const ending = events.find((e) => e.t === 'beaten' || e.t === 'taken');
+  const declaring = events.find((e) => e.t === 'take');
 
   if (events.some((e) => e.t === 'attack' || e.t === 'defend')) playSound('play');
 
+  // "I'll take these" is a distinct moment from the table actually being
+  // gathered up later, which is why it gets its own clip rather than reusing
+  // the gather sound that plays once the round closes.
+  if (declaring) playSound('takeDeclared');
+
+  // How long the table-clear animation actually runs, if one is playing —
+  // computed once here so both the reveal timer below and the draw delay
+  // further down agree with each other and with fx.js, instead of each
+  // guessing its own number.
+  let tableClearMs = 0;
+
   if (ending) {
-    const slots = [...document.querySelectorAll('#slots .slot')];
     const collected = ending.t === 'taken';
     const target = collected
       ? (ending.seat === mySeat ? $('#my-hand') : seatPanel(ending.seat))
       : $('#discard');
+
+    if (collected) holdBack(ending.seat, previous.hands[ending.seat], next.hands[ending.seat]);
+
+    const slots = [...document.querySelectorAll('#slots .slot')];
     flyTableAway(slots, target, { collected });
     playSound('gather');
+
+    if (!reducedMotion()) {
+      const duration = collected ? TABLE_CLEAR_MS.collected : TABLE_CLEAR_MS.discarded;
+      tableClearMs = TABLE_CLEAR_STAGGER_MS * Math.max(slots.length - 1, 0) + duration;
+    }
+
+    if (collected) {
+      if (tableClearMs > 0) revealTimers.push(setTimeout(() => release(ending.seat), tableClearMs));
+      else release(ending.seat); // reduced motion: no flight to wait for
+    }
   }
 
   // Hands refilling from the stock: draw as many cards as each seat gained.
+  // The seat that just took the table is excluded here even if it also drew —
+  // their whole gain that round is already accounted for by the pickup above,
+  // and giving them a second, unrelated "drawing from the stock" animation on
+  // top of it is exactly the double-counted look this guards against.
   const drawn = previous.deck.length - next.deck.length;
   if (drawn > 0) {
     const stock = $('#deck-pile');
-    let total = 0;
+    // Let the table finish clearing first, so the two kinds of flight do not
+    // visually overlap.
+    const start = tableClearMs;
+
     for (let seat = 0; seat < next.playerCount; seat++) {
+      if (ending?.t === 'taken' && ending.seat === seat) continue;
       const gained = next.hands[seat].length - previous.hands[seat].length;
       if (gained <= 0) continue;
-      total += gained;
+
+      holdBack(seat, previous.hands[seat], next.hands[seat]);
       const target = seat === mySeat ? $('#my-hand') : seatPanel(seat);
-      // Let the table finish clearing first, so the two do not overlap.
-      const start = ending && !reducedMotion() ? 260 : 0;
+
+      if (reducedMotion()) {
+        release(seat);
+        continue;
+      }
       setTimeout(() => flyDraw(stock, target, gained), start);
+      const landsAt = start + DRAW_STAGGER_MS * Math.max(gained - 1, 0) + DRAW_FLIGHT_MS;
+      revealTimers.push(setTimeout(() => release(seat), landsAt));
     }
-    void total;
   }
 }
 
 const seatPanel = (seat) => document.querySelector(`.player[data-seat="${seat}"]`);
+
+/** What a seat's hand should currently show: everything not still mid-flight. */
+function shownHand(seat) {
+  const hand = state.hands[seat];
+  const hideSet = hidden[seat];
+  if (!hideSet || hideSet.size === 0) return hand;
+  return hand.filter((card) => !hideSet.has(cardId(card)));
+}
 
 /* ------------------------------------------------------------------ */
 /* moves                                                               */
@@ -587,7 +711,7 @@ function renderOpponents() {
 
     const fan = document.createElement('div');
     fan.className = 'fan fan--opponent';
-    const count = dealing ? (dealt[seat] ?? 0) : state.hands[seat].length;
+    const count = shownHand(seat).length;
     for (let i = 0; i < Math.min(count, 10); i++) fan.append(cardEl(null, { faceDown: true }));
 
     const tally = document.createElement('span');
@@ -653,13 +777,11 @@ function renderHand() {
   const attacks = live ? legalAttacks(state, mySeat) : [];
   const defending = live && mySeat === state.defender && !state.taking;
 
-  // While dealing, only the cards that have actually landed. They are sliced in
-  // deal order and then sorted, so each one drops straight into its place
-  // rather than the hand reshuffling itself at the end.
-  const source = dealing
-    ? state.hands[mySeat].slice(0, dealt[mySeat] ?? 0)
-    : state.hands[mySeat];
-  const hand = [...source].sort(byTrumpThenRank);
+  // Only the cards that have actually landed — during the opening deal, or
+  // while a just-drawn or just-taken card is still mid-flight. Each newly
+  // revealed card drops straight into its sorted place as it lands, rather
+  // than the hand reshuffling itself all at once.
+  const hand = [...shownHand(mySeat)].sort(byTrumpThenRank);
 
   for (const card of hand) {
     const canAttack = attacks.some((c) => sameCard(c, card));

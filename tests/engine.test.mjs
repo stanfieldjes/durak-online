@@ -18,6 +18,7 @@ import {
   beats,
   makeRng,
   MAX_SLOTS,
+  isHopelessForDefender,
 } from '../src/js/durak.js';
 
 const GAMES_PER_SIZE = 1200;
@@ -56,20 +57,12 @@ function auditInvariants(state, where) {
   if (!state.finished && (state.out[state.attacker] || state.out[state.defender])) {
     fail(`${where}: an eliminated player holds a role`);
   }
-  // Nobody should ever be asked to act in a round whose result is already
-  // settled: stock empty, every attacker spent, defender holding more than
-  // they could ever shed. That position must end the game instead.
-  if (!state.finished && state.deck.length === 0) {
-    const others = [];
-    for (let s = 0; s < state.playerCount; s++) {
-      if (s !== state.defender && !state.out[s]) others.push(s);
-    }
-    const spent = others.length > 0 && others.every((s) => state.hands[s].length === 0);
-    const open = state.table.filter((x) => !x.def).length;
-    if (spent && state.hands[state.defender].length > open) {
-      fail(`${where}: game should have ended — defender holds ` +
-        `${state.hands[state.defender].length} with ${open} attacks open and every attacker spent`);
-    }
+  // Nobody should ever be asked to act in a position that is already hopeless
+  // for the defender: stock empty, every other attacker spent, no arrangement
+  // of the defender's hand can beat what is on the table. That position must
+  // end the game instead of waiting for a "take" click.
+  if (!state.finished && isHopelessForDefender(state)) {
+    fail(`${where}: position is hopeless for the defender but the game has not ended`);
   }
 
   // A player is only out once the stock is empty and their hand is gone.
@@ -247,6 +240,114 @@ for (const players of [3, 4]) {
         state.hands[state.durak].length > 0
       );
     }
+  }
+}
+
+/* ---- hopeless-defence is about matching, not card counts --------------- */
+
+console.log('Checking that hopelessness matches actual outcomes, not just card counts...');
+{
+  const base = () => {
+    let s = newGame(3, 2);
+    // Force a small, controllable position: empty the stock and the
+    // attacker's hand, then hand-place exactly what the scenario needs.
+    s = { ...s, deck: [], table: [], discard: 30 };
+    s.hands = [s.hands[0], []];
+    s.attacker = 1; s.defender = 0; s.trump = 'S';
+    s.out = [false, false]; s.passed = [true, true];
+    return s;
+  };
+
+  // Holding MORE cards than there are open attacks is hopeless on its own,
+  // no matter what those cards are. Beating the one open attack only removes
+  // one card — the other six stay in hand, and the game ends with the
+  // defender holding cards while the attacker holds none, whether or not the
+  // defence itself succeeded. isHopelessForDefender must say so immediately,
+  // without needing the defend to actually be attempted first.
+  {
+    let s = base();
+    s.hands[0] = [{ r: '6', s: 'S' }, { r: '7', s: 'S' }, { r: '8', s: 'D' }, { r: '9', s: 'C' },
+      { r: 'K', s: 'H' }, { r: 'Q', s: 'C' }, { r: 'A', s: 'D' }]; // 7 cards, includes a beat
+    s.table = [{ atk: { r: '6', s: 'D' }, def: null }]; // 8D or AD would beat this
+    check('7 cards against 1 open attack is hopeless even though a beat exists',
+      isHopelessForDefender(s));
+
+    const after = applyMove(s, 0, { type: 'defend', card: { r: '8', s: 'D' }, slot: 0 });
+    check('defending it anyway still ends with them holding leftover cards',
+      after.finished && after.durak === 0 && after.hands[0].length === 6);
+  }
+
+  // Exactly as many cards as open attacks, and a genuine covering arrangement
+  // exists: beating everything empties the hand at the same moment the
+  // attacker's did, so this is a live draw and must NOT be forced.
+  {
+    let s = base();
+    s.hands[0] = [{ r: '8', s: 'D' }]; // exactly one card, and it beats the one attack
+    s.table = [{ atk: { r: '6', s: 'D' }, def: null }];
+    check('1 card against 1 open attack with a genuine cover is not hopeless',
+      !isHopelessForDefender(s));
+
+    const after = applyMove(s, 0, { type: 'defend', card: { r: '8', s: 'D' }, slot: 0 });
+    check('beating it with the last card produces a draw, not a durak',
+      after.finished && after.draw && after.durak === null);
+  }
+
+  // Exactly as many cards as open attacks, but the wrong ones: no covering
+  // arrangement exists, so a draw is not reachable — they will have to take,
+  // and taking only adds cards, which guarantees durak just the same as the
+  // too-many-cards case above.
+  {
+    let s = base();
+    s.hands[0] = [{ r: '6', s: 'H' }]; // does not beat a diamond, and S is trump but this isn't S
+    s.table = [{ atk: { r: '9', s: 'D' }, def: null }];
+    check('1 card against 1 open attack with no cover is hopeless',
+      isHopelessForDefender(s));
+  }
+
+  // Two open slots that need the same suit, but the hand holds only one card
+  // of it: coverable by count (2 cards, 2 slots) but not by assignment — the
+  // exact case the matching check exists for.
+  {
+    let s = base();
+    s.hands[0] = [{ r: '9', s: 'H' }, { r: '9', s: 'D' }];
+    s.table = [{ atk: { r: '6', s: 'H' }, def: null }, { atk: { r: '7', s: 'H' }, def: null }];
+    check('two same-suit demands cannot both be met by one matching card',
+      isHopelessForDefender(s));
+  }
+}
+
+console.log('Checking that a live opponent elsewhere at the table blocks a forced end...');
+{
+  // The same "3 cards against 1 open attack" shape that is hopeless in a
+  // 2-player endgame — but this time a 3rd or 4th seat is still in the game
+  // and still holding cards. More attacks could still come from them, so the
+  // defender's own hopeless arithmetic must NOT decide the game while anyone
+  // else at the table can still act. Only once every other active seat has
+  // genuinely run out does this become the same endgame as the 2-player case.
+  for (const players of [3, 4]) {
+    let s = newGame(1, players);
+    s = { ...s, deck: [], table: [], discard: 30 };
+    s.attacker = 1; s.defender = 0; s.trump = 'S';
+    s.out = s.out.map(() => false);
+    s.passed = s.passed.map(() => true);
+    s.hands[0] = [{ r: '6', s: 'H' }, { r: '7', s: 'H' }, { r: '8', s: 'H' }]; // 3 cards, no cover
+    s.table = [{ atk: { r: '9', s: 'D' }, def: null }]; // 1 open attack, hopeless if this were 2p
+
+    // Seat 1 (the immediate attacker) is spent, but some other seat still
+    // holds cards — nobody at the table is out.
+    s.hands[1] = [];
+    for (let seat = 2; seat < players; seat++) s.hands[seat] = [{ r: '6', s: 'C' }];
+
+    check(`${players}p: not hopeless while seat 2 still holds a card`,
+      !isHopelessForDefender(s));
+
+    // That same defender shape, but now genuinely down to the last two
+    // active players — everyone else has already been marked out from an
+    // earlier round, not merely emptied this round.
+    const heads = { ...s, hands: s.hands.map((h, seat) => (seat === 0 ? h : [])) };
+    heads.out = heads.out.map((_, seat) => seat !== 0 && seat !== 1);
+    check(`${players}p: hopeless once every other seat is actually out`,
+      isHopelessForDefender(heads));
   }
 }
 
