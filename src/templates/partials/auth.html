@@ -1,0 +1,38 @@
+<section class="panel panel--auth" data-route="auth" hidden>
+  <div class="auth__pitch">
+    <h1 class="display">Somebody has to be the fool.</h1>
+    <p class="lede">
+      Two-player Durak with a rating that follows you between games.
+      Sign in, open a table, send the link to whoever you intend to beat.
+    </p>
+  </div>
+
+  <div class="auth__form">
+    <div class="tabs" role="tablist">
+      <button type="button" role="tab" class="tab is-on" data-auth-tab="sign-in" aria-selected="true">Sign in</button>
+      <button type="button" role="tab" class="tab" data-auth-tab="sign-up" aria-selected="false">Create account</button>
+    </div>
+
+    <form id="auth-form" novalidate>
+      <label class="field" data-only="sign-up" hidden>
+        <span>Name at the table</span>
+        <input type="text" name="username" autocomplete="nickname" minlength="3" maxlength="20"
+               placeholder="3-20 characters">
+      </label>
+
+      <label class="field">
+        <span>Email</span>
+        <input type="email" name="email" autocomplete="email" required placeholder="you@example.com">
+      </label>
+
+      <label class="field">
+        <span>Password</span>
+        <input type="password" name="password" autocomplete="current-password" required minlength="8"
+               placeholder="At least 8 characters">
+      </label>
+
+      <p class="form-error" id="auth-error" role="alert" hidden></p>
+      <button type="submit" class="btn btn--primary" id="auth-submit">Sign in</button>
+    </form>
+  </div>
+</section>

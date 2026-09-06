@@ -1,0 +1,48 @@
+<section class="panel panel--game" data-route="game" hidden>
+
+  <div class="waiting" id="waiting" hidden>
+    <h1 class="display">Waiting for players</h1>
+    <p class="lede" id="waiting-count"></p>
+    <ol class="seat-list" id="seat-list"></ol>
+    <div class="actions">
+      <button type="button" class="btn btn--primary" id="copy-link">Copy the link</button>
+      <button type="button" class="btn" id="start-now" hidden>Start with who is here</button>
+      <button type="button" class="btn btn--quiet" id="waiting-leave">Leave the table</button>
+    </div>
+  </div>
+
+  <div class="felt" id="felt" hidden>
+    <div class="opponents" id="opponents"></div>
+
+    <div class="felt__middle">
+      <div class="stock" id="stock">
+        <div class="stock__trump" id="trump-card"></div>
+        <div class="stock__pile" id="deck-pile"><span id="deck-count">0</span></div>
+        <span class="stock__label" id="trump-label"></span>
+      </div>
+
+      <div class="slots" id="slots" aria-label="Cards in play"></div>
+
+      <div class="discard" id="discard" hidden><span id="discard-count">0</span> beaten</div>
+    </div>
+
+    <div class="felt__bottom">
+      <p class="prompt" id="prompt">...</p>
+      <div class="fan fan--mine" id="my-hand" aria-label="Your cards"></div>
+      <div class="actions">
+        <button type="button" class="btn btn--primary" id="act-take" hidden>Take the cards</button>
+        <button type="button" class="btn btn--primary" id="act-pass" hidden>Pass</button>
+        <button type="button" class="btn btn--quiet" id="act-leave">Leave</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="result" id="result" hidden>
+    <h2 class="result__title" id="result-title"></h2>
+    <p class="result__elo" id="result-elo"></p>
+    <ul class="result__table" id="result-table"></ul>
+    <div class="result__buttons">
+      <button type="button" class="btn btn--primary" id="result-again">Back to the lobby</button>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,31 @@
+<section class="panel panel--lobby" data-route="lobby" hidden>
+  <div class="lobby__act">
+    <h1 class="display">Open a table</h1>
+    <p class="lede">Pick how many seats, then share the link. The game deals itself once the last seat fills.</p>
+
+    <fieldset class="seats-picker">
+      <legend>Seats</legend>
+      <label><input type="radio" name="seats" value="2"><span>2</span></label>
+      <label><input type="radio" name="seats" value="3"><span>3</span></label>
+      <label><input type="radio" name="seats" value="4" checked><span>4</span></label>
+    </fieldset>
+
+    <div class="lobby__buttons">
+      <button type="button" class="btn btn--primary" id="create-game">Open a table</button>
+      <button type="button" class="btn" id="refresh-games">Refresh</button>
+    </div>
+    <p class="hint" id="my-open-game" hidden></p>
+  </div>
+
+  <div class="lobby__tables">
+    <h2 class="heading">Tables waiting for players</h2>
+    <ul class="tables" id="open-games"></ul>
+    <p class="empty" id="no-games" hidden>No open tables. Open one and the next player who looks will find it.</p>
+  </div>
+
+  <div class="lobby__history">
+    <h2 class="heading">Your last games</h2>
+    <ul class="history" id="recent-games"></ul>
+    <p class="empty" id="no-history" hidden>No games yet.</p>
+  </div>
+</section>

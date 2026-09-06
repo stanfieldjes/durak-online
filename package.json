@@ -1,0 +1,13 @@
+{
+  "name": "durak-online",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Two-player Durak with an Elo ladder, served as a static site.",
+  "type": "module",
+  "scripts": {
+    "build": "python3 build.py",
+    "dev": "python3 build.py --serve",
+    "watch": "python3 build.py --watch",
+    "test": "node tests/engine.test.mjs && node tests/sync.test.mjs"
+  }
+}

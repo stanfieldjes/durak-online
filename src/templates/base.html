@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{ config.site.title }}</title>
+<meta name="description" content="{{ config.site.tagline }}">
+<meta name="color-scheme" content="dark">
+<base href="{{ config.site.basePath }}">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Rubik:ital,wght@0,400;0,500;0,700;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="{{ asset "styles/main.css" }}">
+</head>
+<body>
+
+<div id="boot" class="boot">Dealing…</div>
+
+<div id="app" hidden>
+  {{ include "partials/header.html" }}
+
+  <main id="view" class="view">
+    {{ include "partials/auth.html" }}
+    {{ include "partials/lobby.html" }}
+    {{ include "partials/game.html" }}
+    {{ include "partials/leaderboard.html" }}
+  </main>
+
+  <footer class="footer">
+    <span>Built {{ build.date }}</span>
+    <a href="https://github.com/YOUR-USERNAME/durak-online">Source</a>
+  </footer>
+</div>
+
+<div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+<script type="module" src="{{ asset "js/app.js" }}"></script>
+<noscript>
+  <p class="noscript">Durak needs JavaScript to deal the cards.</p>
+</noscript>
+</body>
+</html>

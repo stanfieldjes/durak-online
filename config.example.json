@@ -1,0 +1,15 @@
+{
+  "site": {
+    "title": "Durak",
+    "tagline": "Last one holding cards is the fool.",
+    "basePath": "/durak-online/"
+  },
+  "supabase": {
+    "url": "https://YOUR-PROJECT.supabase.co",
+    "anonKey": "YOUR-ANON-KEY"
+  },
+  "game": {
+    "defaultPlayers": 4,
+    "turnSeconds": 0
+  }
+}
