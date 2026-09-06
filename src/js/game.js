@@ -10,6 +10,7 @@ import {
   sameCard,
   rankValue,
   newGame,
+  HAND_SIZE,
   SUITS,
   SUIT_GLYPH,
   IllegalMove,
@@ -29,7 +30,7 @@ import {
 import { readableError } from './supabase.js';
 import { session } from './auth.js';
 import { formatRatingDelta, formatRating } from './elo.js';
-import { flyTableAway, flyDraw, clearEffects, reducedMotion } from './fx.js';
+import { flyTableAway, flyDraw, flyDeal, clearEffects, reducedMotion } from './fx.js';
 import { play as playSound, playRepeat, isMuted, toggleMuted } from './sound.js';
 import { $, show, setText, clear, toast, cardEl } from './ui.js';
 
@@ -46,6 +47,9 @@ let unwatch = null;
 let sending = false;
 let resultShown = false;
 let resultTimer = null;
+let dealing = false;    // opening hands still flying out
+let dealPlayed = false; // only deal once per visit to a table
+let dealTimer = null;
 
 export function initGame() {
   $('#act-take').addEventListener('click', () => play({ type: 'take' }));
@@ -129,6 +133,10 @@ function reset() {
   unwatch = null;
   clearTimeout(resultTimer);
   resultTimer = null;
+  clearTimeout(dealTimer);
+  dealTimer = null;
+  dealing = false;
+  dealPlayed = false;
   clearEffects();
   game = null;
   confirmed = null;
@@ -206,10 +214,50 @@ function advanceLocally(move) {
  * render immediately. Effects animate clones, so rendering does not wait.
  */
 function present(previous, next) {
-  const events = newEvents(previous, next);
-  if (previous && next && events.length) runEffects(previous, next, events);
+  // A position at version 0 is a table that has just been dealt.
+  const opening = Boolean(next) && next.version === 0 && !next.finished && !dealPlayed;
+
+  if (opening) {
+    dealPlayed = true;
+    dealing = true;
+  } else {
+    const events = newEvents(previous, next);
+    if (previous && next && events.length) runEffects(previous, next, events);
+  }
+
   state = next;
   render();
+  if (opening) startDeal();
+}
+
+/**
+ * Deal the opening hands one card at a time. The hands are held back until the
+ * cards land, so the deal is something to watch rather than a decoration over
+ * a table that already has everything on it.
+ */
+function startDeal() {
+  playSound('start');
+
+  requestAnimationFrame(() => {
+    if (!state) return;
+    const targets = [];
+    for (let i = 0; i < state.playerCount; i++) {
+      const seat = (mySeat + i) % state.playerCount;
+      targets.push(seat === mySeat ? $('#my-hand') : seatPanel(seat));
+    }
+
+    const ms = flyDeal($('#deck-pile'), targets, HAND_SIZE, {
+      gap: 55,
+      onCard: () => playSound('draw'),
+    });
+
+    clearTimeout(dealTimer);
+    dealTimer = setTimeout(() => {
+      dealTimer = null;
+      dealing = false;
+      render();
+    }, ms);
+  });
 }
 
 function newEvents(previous, next) {
@@ -513,12 +561,12 @@ function renderOpponents() {
 
     const fan = document.createElement('div');
     fan.className = 'fan fan--opponent';
-    const count = state.hands[seat].length;
+    const count = dealing ? 0 : state.hands[seat].length;
     for (let i = 0; i < Math.min(count, 10); i++) fan.append(cardEl(null, { faceDown: true }));
 
     const tally = document.createElement('span');
     tally.className = 'player__count';
-    tally.textContent = count === 1 ? '1 card' : `${count} cards`;
+    tally.textContent = dealing ? '' : count === 1 ? '1 card' : `${count} cards`;
 
     panel.append(head, fan, tally);
     box.append(panel);
@@ -574,6 +622,7 @@ function renderSlots() {
 function renderHand() {
   const box = $('#my-hand');
   clear(box);
+  if (dealing) return; // the cards are still on their way
 
   const live = !state.finished && !state.out[mySeat];
   const attacks = live ? legalAttacks(state, mySeat) : [];
@@ -632,12 +681,17 @@ function byTrumpThenRank(a, b) {
 
 function renderPrompt() {
   const el = $('#prompt');
+  if (dealing) {
+    setText(el, 'Dealing…');
+    el.classList.remove('prompt--you');
+    return;
+  }
   setText(el, describe(state, mySeat));
   el.classList.toggle('prompt--you', canAct(state, mySeat) && !state.finished);
 }
 
 function renderActions() {
-  const live = !state.finished && !state.out[mySeat];
+  const live = !dealing && !state.finished && !state.out[mySeat];
 
   const defending = live && mySeat === state.defender && state.table.length > 0 && !state.taking;
   const takeable = canTake(state, mySeat);

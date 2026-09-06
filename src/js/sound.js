@@ -14,8 +14,11 @@ const STORAGE_KEY = 'durak:muted';
 
 const CLIPS = {
   play: { file: 'play_card.mp3', volume: 0.7 },
-  draw: { file: 'draw_card.mp3', volume: 0.5 },
+  // Dealing fires this every 55ms, faster than the clip itself finishes, so it
+  // needs enough voices to overlap without cutting itself off.
+  draw: { file: 'draw_card.mp3', volume: 0.5, pool: 8 },
   gather: { file: 'pickup_or_discard.mp3', volume: 0.6 },
+  start: { file: 'game_start.mp3', volume: 0.7 },
   win: { file: 'win.mp3', volume: 0.8 },
   loss: { file: 'loss.mp3', volume: 0.8 },
 };
@@ -33,9 +36,9 @@ function readMuted() {
 }
 
 function build() {
-  for (const [name, { file, volume }] of Object.entries(CLIPS)) {
+  for (const [name, { file, volume, pool = POOL }] of Object.entries(CLIPS)) {
     const voices = [];
-    for (let i = 0; i < POOL; i++) {
+    for (let i = 0; i < pool; i++) {
       const audio = new Audio(BASE + file);
       audio.preload = 'auto';
       audio.volume = volume;

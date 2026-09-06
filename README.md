@@ -236,7 +236,7 @@ config.json              site + Supabase settings (safe to commit)
 src/templates/           base.html and the view partials
 src/styles/main.css
 src/js/durak.js          rules engine — pure, no DOM, no network
-src/js/fx.js             card movement, animated as clones over the page
+src/js/fx.js             card movement and dealing, animated as clones
 src/js/sound.js          sound effects, pooled and mutable
 src/audio/               the clips themselves
 src/js/elo.js            rating model, mirrored by finish_game()
@@ -262,10 +262,12 @@ projects after a week with no activity; opening the dashboard wakes it up.
 
 ## Sound
 
-Five short clips in `src/audio/`, played from `src/js/sound.js`: a card landing,
-cards being drawn, the table being gathered up, and a result each way. Each clip
-keeps a small pool of audio elements, because two cards can land close enough
-together that one element cannot overlap itself.
+Six short clips in `src/audio/`, played from `src/js/sound.js`: the game
+starting, a card landing, cards being drawn, the table being gathered up, and a
+result each way. Each clip keeps a small pool of audio elements, because two
+cards can land close enough together that one element cannot overlap itself.
+The draw clip keeps a larger pool than the rest, since dealing fires it every
+55ms — faster than the clip itself finishes.
 
 Browsers refuse to play anything until the person has interacted with the page,
 so the first click is used to prime the clips rather than to play them. The

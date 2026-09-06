@@ -115,6 +115,55 @@ export function flyDraw(stockEl, target, count) {
   }
 }
 
+/**
+ * Deal the opening hands: one card at a time, round by round, to each seat in
+ * turn — the way a person deals rather than six cards appearing at once.
+ *
+ * Returns how long the whole thing takes, so the caller knows when the real
+ * hands can be revealed. Returns 0 when there is nothing to animate.
+ */
+export function flyDeal(stockEl, targets, rounds, { gap = 55, onCard } = {}) {
+  if (reducedMotion() || !stockEl || rounds <= 0) return 0;
+  const from = stockEl.getBoundingClientRect();
+  if (!from.width) return 0;
+
+  const host = surface();
+  const start = centreOf(from);
+  let index = 0;
+
+  for (let round = 0; round < rounds; round++) {
+    for (const target of targets) {
+      const box = target?.getBoundingClientRect();
+      if (!box?.width) {
+        index++;
+        continue;
+      }
+      const end = centreOf(box);
+
+      const copy = document.createElement('div');
+      copy.className = 'card card--back fx-piece';
+      copy.style.left = `${from.left}px`;
+      copy.style.top = `${from.top}px`;
+      copy.style.width = `${from.width}px`;
+      copy.style.height = `${from.height}px`;
+      host.append(copy);
+
+      animate(copy, end.x - start.x, end.y - start.y, {
+        duration: 300,
+        delay: index * gap,
+        spin: 10,
+        fade: 0.2,
+        scale: 0.85,
+      });
+
+      if (onCard) setTimeout(onCard, index * gap);
+      index++;
+    }
+  }
+
+  return index === 0 ? 0 : (index - 1) * gap + 300;
+}
+
 export function clearEffects() {
   if (layer) layer.replaceChildren();
 }
