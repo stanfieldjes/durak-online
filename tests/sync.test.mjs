@@ -193,91 +193,95 @@ const sum = (xs) => xs.reduce((a, b) => a + b, 0);
 
 check('everyone starts at 100', START === 100);
 
-// Two players: one loser, one winner, so it must be symmetric.
-{
-  const [w, l] = ratingChanges([START, START], 1);
-  check('an even heads-up game moves 5 points', w === 5 && l === -5);
-}
-
-// Three and four players: losing costs much more than winning gains.
-for (const n of [3, 4]) {
-  const ratings = Array(n).fill(START);
-  const deltas = ratingChanges(ratings, 0);
-  const durak = deltas[0];
-  const survivor = deltas[1];
-  check(`${n}p: the durak loses 5`, Math.abs(durak + 5) < 0.01);
-  // The durak's loss is split among the n-1 survivors, so it is that much larger.
-  check(`${n}p: losing costs (n-1)x what winning gains`,
-    Math.abs(durak) >= survivor * (n - 1) - 0.02);
-  check(`${n}p: winning is a small bonus`, survivor > 0 && survivor < 3);
-  check(`${n}p: the pool is zero sum`, Math.abs(sum(deltas)) < 0.05);
-}
-
-// Zero sum across a wide sweep of ratings and table sizes.
+// Every change is a whole number, and they still cancel out exactly.
 for (const n of [2, 3, 4]) {
-  for (let spread = 0; spread <= 120; spread += 17) {
+  for (let spread = 0; spread <= 120; spread += 13) {
     const ratings = Array.from({ length: n }, (_, i) => START + i * spread);
     for (let durak = -1; durak < n; durak++) {
       const deltas = ratingChanges(ratings, durak);
-      if (Math.abs(sum(deltas)) > 0.05) {
-        fail(`${n}p: not zero sum at spread ${spread}, durak ${durak} (sum ${sum(deltas)})`);
+      if (!deltas.every(Number.isInteger)) {
+        fail(`${n}p: fractional change at spread ${spread}, durak ${durak}: ${deltas}`);
+      }
+      if (sum(deltas) !== 0) {
+        fail(`${n}p: changes sum to ${sum(deltas)} at spread ${spread}, durak ${durak}`);
       }
       for (const d of deltas) {
-        if (Math.abs(d) > K + 0.01) fail(`${n}p: a rating moved more than K`);
+        if (Math.abs(d) > K) fail(`${n}p: a rating moved ${d}, more than K`);
       }
     }
   }
 }
 
-// Draws move nothing when everyone is equal.
+// Two players: one loser, one winner, so it has to be symmetric.
 {
-  const deltas = ratingChanges([START, START, START], -1);
-  check('an even draw moves nothing', deltas.every((d) => Math.abs(d) < 0.01));
+  const [w, l] = ratingChanges([START, START], 1);
+  check('an even heads-up game moves 5 points', w === 5 && l === -5);
 }
 
+// Three and four players: losing costs much more than winning gains, because
+// the durak's loss is split among everyone who got out.
+for (const [n, expectedDurak, expectedSurvivor] of [[3, -6, 3], [4, -6, 2]]) {
+  const deltas = ratingChanges(Array(n).fill(START), 0);
+  check(`${n}p: the durak loses ${-expectedDurak}`, deltas[0] === expectedDurak);
+  check(`${n}p: each survivor gains ${expectedSurvivor}`,
+    deltas.slice(1).every((d) => d === expectedSurvivor));
+  check(`${n}p: losing costs (n-1)x what winning gains`,
+    Math.abs(deltas[0]) === expectedSurvivor * (n - 1));
+}
+
+// Draws move nothing when everyone is equal.
+check('an even draw moves nothing',
+  ratingChanges([START, START, START], -1).every((d) => d === 0));
+
 // Being the durak against stronger players is more forgivable.
+//
+// Whole numbers make this coarse: at K = 10 a three-player loss to equals and
+// a loss to players rated 60 points lower both land on −6, because the exact
+// figures (5.0 and 6.7) round the same way. The ordering still holds, and a
+// wider gap does separate them. Raise K in elo.js and finish_game() together
+// if you want finer resolution.
 {
   const vsStrong = ratingChanges([100, 180, 180], 0)[0];
-  const vsWeak = ratingChanges([100, 40, 40], 0)[0];
-  check('losing to stronger players costs less', vsStrong > vsWeak);
-  check('losing to much weaker players is punished hard', vsWeak < -6);
+  const vsEqual = ratingChanges([100, 100, 100], 0)[0];
+  const vsWeak = ratingChanges([100, 20, 20], 0)[0];
+  check('losing to stronger players costs least', vsStrong > vsEqual);
+  check('losing to much weaker players costs most', vsWeak < vsEqual);
+  check('losing to much weaker players is punished hard', vsWeak <= -8);
 }
 
 // The floor holds.
-{
-  const deltas = ratingChanges([1, 150, 150], 0);
-  check('a rating never drops below the floor', 1 + deltas[0] >= FLOOR - 0.001);
-}
+check('a rating never drops below the floor',
+  1 + ratingChanges([1, 150, 150], 0)[0] >= FLOOR);
 
 // Someone who is always the durak sinks to the floor and stays there.
 {
   let rating = START;
-  for (let i = 0; i < 500; i++) {
+  for (let i = 0; i < 800; i++) {
     rating = Math.max(FLOOR, rating + ratingChanges([rating, START, START, START], 0)[0]);
   }
-  check('a player who always loses ends at the floor', rating < 5);
+  check('a player who always loses ends at the floor', rating === FLOOR);
 }
 
-// Someone who is never the durak climbs to a ceiling and stops. Survivors at a
-// four-player table share a score of 2/3, so no rating can outrun that.
+// Someone who is never the durak climbs to a ceiling and stops. Whole-number
+// changes make that ceiling firmer than it was: once the exact gain falls below
+// half a point it rounds to nothing, so the very top of the ladder compresses.
 {
   let rating = START;
-  for (let i = 0; i < 500; i++) {
+  for (let i = 0; i < 800; i++) {
     rating += ratingChanges([rating, START, START, START], 1)[0];
   }
   check('a player who never loses settles near the ceiling',
-    rating > 140 && rating < 190);
+    rating > 130 && rating < 155);
 }
 
-// A realistic bad run costs real ground: being the durak 40% of the time at a
-// four-player table should sit well below the starting rating.
+// A realistic bad run costs real ground.
 {
   let rating = START;
-  for (let i = 0; i < 2000; i++) {
+  for (let i = 0; i < 4000; i++) {
     const durak = i % 5 < 2 ? 0 : 1;          // durak 40% of the time
-    rating += ratingChanges([rating, START, START, START], durak)[0];
+    rating = Math.max(FLOOR, rating + ratingChanges([rating, START, START, START], durak)[0]);
   }
-  check('a 40% durak rate settles well below start', rating > 40 && rating < 85);
+  check('a 40% durak rate settles well below start', rating > 60 && rating < 95);
 }
 
 // Scores on both sides sum to n/2, which is why the pool balances.
