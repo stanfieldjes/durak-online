@@ -1,7 +1,7 @@
 import { supabase, readableError } from './supabase.js';
 import { getProfile, createProfile } from './db.js';
 import { $, $$, show, setText } from './ui.js';
-import { formatRating } from './elo.js';
+import { computeScore, formatScore } from './score.js';
 
 let mode = 'sign-in';
 
@@ -29,6 +29,16 @@ export function onAuthChange(handler) {
   });
 }
 
+/** A profile row carries the totals; the score falls out of them. */
+export function scoreOf(profile) {
+  if (!profile) return null;
+  return computeScore({
+    games: profile.wins + profile.losses + profile.draws,
+    duraks: profile.losses,
+    expectedDuraks: profile.expected_duraks,
+  });
+}
+
 export function renderWhoami() {
   const box = $('#whoami');
   if (!session.profile) {
@@ -36,7 +46,7 @@ export function renderWhoami() {
     return;
   }
   setText($('#whoami-name'), session.profile.username);
-  setText($('#whoami-elo'), formatRating(session.profile.rating));
+  setText($('#whoami-elo'), formatScore(scoreOf(session.profile)));
   show(box, true);
 }
 

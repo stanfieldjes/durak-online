@@ -5,7 +5,7 @@ import { supabase } from './supabase.js';
 export async function getProfile(userId) {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, username, rating, wins, losses, draws')
+    .select('id, username, wins, losses, draws, expected_duraks')
     .eq('id', userId)
     .maybeSingle();
   if (error) throw error;
@@ -25,7 +25,7 @@ export async function createProfile(userId, username) {
 export async function getLeaderboard(limit = 50) {
   const { data, error } = await supabase
     .from('leaderboard')
-    .select('id, username, rating, durak_rate')
+    .select('id, username, games, duraks, expected_duraks, durak_rate, expected_rate, score')
     .limit(limit);
   if (error) throw error;
   return data ?? [];
@@ -34,8 +34,8 @@ export async function getLeaderboard(limit = 50) {
 /* ---------------- games ---------------- */
 
 const GAME_COLUMNS = `
-  id, status, host_id, max_players, seed, state, version, durak_id, rating_delta, created_at,
-  players:game_players ( seat, player_id, profile:profiles ( id, username, rating ) )
+  id, status, host_id, max_players, seed, state, version, durak_id, score_delta, created_at,
+  players:game_players ( seat, player_id, profile:profiles ( id, username, wins, losses, draws, expected_duraks ) )
 `;
 
 /**

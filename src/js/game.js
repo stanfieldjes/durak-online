@@ -29,8 +29,8 @@ import {
   isStaleError,
 } from './db.js';
 import { readableError } from './supabase.js';
-import { session } from './auth.js';
-import { formatRatingDelta, formatRating } from './elo.js';
+import { session, scoreOf } from './auth.js';
+import { formatScore } from './score.js';
 import {
   flyTableAway,
   flyDraw,
@@ -679,7 +679,7 @@ function renderWaiting() {
       name.textContent = profile.username + (game.host_id === profile.id ? ' (host)' : '');
       const rating = document.createElement('span');
       rating.className = 'seat__rating';
-      rating.textContent = formatRating(profile.rating);
+      rating.textContent = formatScore(scoreOf(profile));
       li.append(name, rating);
     } else {
       li.textContent = 'Empty';
@@ -718,7 +718,7 @@ function renderOpponents() {
 
     const rating = document.createElement('span');
     rating.className = 'player__rating';
-    rating.textContent = formatRating(profile?.rating);
+    rating.textContent = formatScore(scoreOf(profile));
 
     const role = document.createElement('span');
     role.className = 'player__role';
@@ -902,7 +902,7 @@ async function showResult() {
     /* fall back to what we have */
   }
 
-  const deltas = game.rating_delta ?? {};
+  const deltas = game.score_delta ?? {};
   const mine = deltas[session.user.id];
   const numeric = mine === undefined || mine === null ? null : Number(mine);
 
@@ -924,7 +924,7 @@ async function showResult() {
   setText($('#result-title'), title);
 
   const figure = $('#result-elo');
-  setText(figure, numeric === null ? '' : `${formatRatingDelta(numeric)} rating`);
+  setText(figure, numeric === null ? '' : `${formatScore(numeric)} score`);
   figure.classList.toggle('delta--down', numeric !== null && numeric < 0);
   figure.classList.toggle('delta--up', numeric !== null && numeric > 0);
 
@@ -933,7 +933,7 @@ async function showResult() {
   for (const seatRow of game.players ?? []) {
     const d = deltas[seatRow.player_id];
     const value = d === undefined || d === null ? null : Number(d);
-    const settled = Number(seatRow.profile?.rating ?? 0);
+    const settled = scoreOf(seatRow.profile);
 
     const li = document.createElement('li');
     if (game.durak_id === seatRow.player_id) li.classList.add('is-durak');
@@ -944,7 +944,7 @@ async function showResult() {
     const change = document.createElement('span');
     change.className = value === null ? '' : value >= 0 ? 'delta--up' : 'delta--down';
     change.textContent =
-      value === null ? '—' : `${formatRating(settled)}  (${formatRatingDelta(value)})`;
+      value === null ? '—' : `${formatScore(settled)}  (${formatScore(value)})`;
 
     li.append(name, change);
     list.append(li);
@@ -954,7 +954,7 @@ async function showResult() {
     const fresh = await getProfile(session.user.id);
     if (fresh) {
       session.profile = fresh;
-      setText($('#whoami-elo'), formatRating(fresh.rating));
+      setText($('#whoami-elo'), formatScore(scoreOf(fresh)));
     }
   } catch {
     /* the header keeps its old number */

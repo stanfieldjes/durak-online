@@ -870,8 +870,54 @@ button.card.is-selected {
 .ranks th:first-child, .ranks td:first-child { text-align: left; }
 .ranks th { color: var(--chalk-rail); font-weight: 500; font-size: var(--step--1); }
 .ranks tbody tr.is-me { background: rgba(200, 16, 46, 0.16); }
-.ranks .rating { color: var(--green-bright); font-weight: 700; }
-.ranks .durak-rate { color: var(--red-soft); }
+
+.ranks__place {
+  text-align: right;
+  width: 2.5rem;
+  color: var(--chalk-rail);
+  font-variant-numeric: tabular-nums;
+}
+
+.ranks tbody .ranks__place { font-weight: 500; color: var(--chalk); }
+
+/* Games played and the expected rate are context for the score, not the
+   point of the table, so they sit back a little. */
+.ranks__muted { color: var(--chalk-rail); }
+
+.ranks__score { font-weight: 700; }
+
+/* Explanation under the ladder: a number nobody can derive is a number nobody
+   trusts, so the whole calculation is spelled out rather than summarised. */
+.explainer {
+  margin-top: 2.5rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--rail-line);
+  max-width: 60ch;
+  color: var(--chalk-rail);
+}
+
+.explainer__title {
+  font-size: var(--step-0);
+  font-weight: 500;
+  color: var(--chalk);
+  margin: 0 0 0.6rem;
+}
+
+.explainer p { margin: 0 0 0.8rem; line-height: 1.6; }
+
+.explainer em { font-style: normal; color: var(--chalk); }
+
+.explainer strong { color: var(--chalk); font-weight: 700; }
+
+.explainer__formula {
+  color: var(--chalk);
+  padding: 0.6rem 0.9rem;
+  background: rgba(0, 0, 0, 0.25);
+  border-left: 2px solid var(--red);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.explainer__sum { color: var(--chalk); white-space: nowrap; }
 
 /* ---------- toast ---------- */
 

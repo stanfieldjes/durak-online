@@ -3,8 +3,8 @@
 --
 -- Design rule: the browser never writes to a table directly. Every write goes
 -- through a SECURITY DEFINER function that re-checks the claim being made.
--- In particular a client can never set its own rating — finish_game computes
--- every rating from values already in the database.
+-- In particular a client can never set its own score. Scores are derived from
+-- win and loss totals the database keeps itself, never sent by a client.
 
 -- ---------------------------------------------------------------- profiles --
 
@@ -13,16 +13,18 @@ create table if not exists public.profiles (
   username   text unique not null
              check (char_length(username) between 3 and 20
                     and username ~ '^[A-Za-z0-9_ -]+$'),
-  rating     int  not null default 500,
   wins       int  not null default 0,
-  losses     int  not null default 0,
+  losses     int  not null default 0,   -- games ended as the durak
   draws      int  not null default 0,
+  -- Running total of each game's 1/playerCount: how many times the table
+  -- sizes played say this player should have been the durak.
+  expected_duraks numeric(12,6) not null default 0,
   created_at timestamptz not null default now()
 );
 
 alter table public.profiles enable row level security;
 
--- Names and ratings are public; that is what a ladder is.
+-- Names and records are public; that is what a ladder is.
 drop policy if exists "profiles are readable" on public.profiles;
 create policy "profiles are readable"
   on public.profiles for select
@@ -34,10 +36,10 @@ create policy "create own profile"
   on public.profiles for insert
   with check (
     auth.uid() = id
-    and rating = 500 and wins = 0 and losses = 0 and draws = 0
+    and wins = 0 and losses = 0 and draws = 0 and expected_duraks = 0
   );
 
--- Deliberately no UPDATE policy: ratings move only inside finish_game().
+-- Deliberately no UPDATE policy: records move only inside finish_game().
 
 -- ------------------------------------------------------------------- games --
 
@@ -51,7 +53,7 @@ create table if not exists public.games (
   state        jsonb,
   version      int  not null default 0,   -- mirrors state->>'version'
   durak_id     uuid references public.profiles(id),
-  rating_delta jsonb,
+  score_delta  jsonb,
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
@@ -111,19 +113,33 @@ create trigger games_touch_updated_at
 
 -- ------------------------------------------------------------- leaderboard --
 
--- The ladder answers one question: how good is this player, and how often do
--- they end up holding the cards. Nothing else belongs on it.
+-- Score: how much better a player does than the table sizes they play would
+-- predict, in percentage points. See public.score() below.
+create or replace function public.score(p_games int, p_duraks int, p_expected numeric)
+returns int
+language sql immutable
+as $$
+  select case
+           when p_games <= 0 then 0
+           else round(100.0 * (p_expected - p_duraks) / p_games)::int
+         end;
+$$;
+
 drop view if exists public.leaderboard;
 create view public.leaderboard
 with (security_invoker = on) as
   select
     id,
     username,
-    rating,
-    round(100.0 * losses / nullif(wins + losses + draws, 0))::int as durak_rate
+    wins + losses + draws as games,
+    losses as duraks,
+    expected_duraks,
+    round(100.0 * losses / nullif(wins + losses + draws, 0))::int as durak_rate,
+    round(100.0 * expected_duraks / nullif(wins + losses + draws, 0))::int as expected_rate,
+    public.score(wins + losses + draws, losses, expected_duraks) as score
   from public.profiles
   where wins + losses + draws > 0
-  order by rating desc, durak_rate asc, username;
+  order by score desc, games desc, username;
 
 -- --------------------------------------------------------------- functions --
 
@@ -342,27 +358,21 @@ begin
 end;
 $$;
 
--- Settle the game and move every rating.
+-- Settle the game and update everyone's record.
 --
 -- p_durak_seat is the seat of the fool, or -1 for a draw. You may only name
 -- someone else the durak if the stored position agrees; naming yourself is
 -- always allowed, which is how conceding works.
 --
--- Scoring, mirroring src/js/elo.js:
---   expected_i = mean over j<>i of 1 / (1 + 10^((r_j - r_i) / scale))
---   actual_i   = 0 for the durak, (1 + 0.5(n-2))/(n-1) for everyone else,
---                0.5 for everyone on a draw
---   delta_i    = k * (actual_i - expected_i)
--- Both sides sum to n/2, so the pool is zero sum at loss_bias = 1.
+-- Every seat's expected_duraks grows by 1/n for this game, where n is how many
+-- people were at the table, and the durak's loss count grows by one. Score is
+-- derived from those totals rather than stored, so it can never drift out of
+-- step with the games behind it. See public.score() and src/js/score.js.
 create or replace function public.finish_game(p_game uuid, p_durak_seat int)
 returns public.games
 language plpgsql security definer set search_path = public
 as $$
 declare
-  k          constant numeric := 40;    -- keep in step with src/js/elo.js
-  scale      constant numeric := 200;
-  floor_at   constant int     := 0;
-  loss_bias  constant numeric := 1;     -- >1 destroys points; see README
   me         uuid := auth.uid();
   row        public.games;
   my_seat    int;
@@ -372,23 +382,10 @@ declare
   claimed    int;
   seats      int[];
   ids        uuid[];
-  ratings    int[];
-  raw        numeric[];
-  weights    numeric[];
-  weight_total numeric;
-  strongest  int;
-  deltas     int[];
-  expected   numeric;
-  actual     numeric;
-  survivors  int;
-  residual   int;
-  step       int;
-  best       int;
-  best_want  numeric;
-  want       numeric;
-  guard      int;
+  share      numeric;
+  before     int;
+  after      int;
   i          int;
-  j          int;
   durak_uuid uuid;
   payload    jsonb := '{}'::jsonb;
 begin
@@ -427,13 +424,10 @@ begin
     is_draw := false;                   -- a concession is not a draw
   end if;
 
-  -- Seats in order, with their current ratings locked for the transaction.
   select array_agg(gp.seat order by gp.seat),
-         array_agg(gp.player_id order by gp.seat),
-         array_agg(p.rating order by gp.seat)
-    into seats, ids, ratings
+         array_agg(gp.player_id order by gp.seat)
+    into seats, ids
     from game_players gp
-    join profiles p on p.id = gp.player_id
    where gp.game_id = p_game;
 
   n := array_length(seats, 1);
@@ -442,97 +436,36 @@ begin
   end if;
   perform 1 from profiles where id = any(ids) for update;
 
-  raw     := array_fill(0::numeric, array[n]);
-  deltas  := array_fill(0, array[n]);
-  weights := array_fill(0::numeric, array[n]);
-
-  -- Each seat's expected chance of being the durak, mirroring
-  -- expectedDurakChances() in src/js/elo.js: weight each seat by
-  -- 10^(-rating / scale) and normalise so the chances sum to 1. Weights are
-  -- taken relative to the strongest rating to keep the exponent small.
-  strongest := ratings[1];
-  for i in 2..n loop
-    if ratings[i] > strongest then strongest := ratings[i]; end if;
-  end loop;
-
-  weight_total := 0;
-  for i in 1..n loop
-    weights[i] := power(10.0, (strongest - ratings[i]) / scale);
-    weight_total := weight_total + weights[i];
-  end loop;
+  -- One durak per game, so each seat carries 1/n of the blame in advance.
+  share := 1.0 / n;
 
   for i in 1..n loop
-    expected := weights[i] / weight_total;
+    select public.score(wins + losses + draws, losses, expected_duraks)
+      into before
+      from profiles where id = ids[i];
 
-    -- What actually happened: 1 for the durak, 0 for everyone else. A draw
-    -- spreads the blame evenly at 1/n.
     if p_durak_seat = -1 then
-      actual := 1.0 / n;
-    elsif seats[i] = p_durak_seat then
-      actual := 1;
-    else
-      actual := 0;
-    end if;
-
-    raw[i] := k * (expected - actual);
-    if seats[i] = p_durak_seat and raw[i] < 0 then
-      raw[i] := raw[i] * loss_bias;
-    end if;
-    deltas[i] := round(raw[i])::int;
-  end loop;
-
-  -- Ratings are whole numbers, and rounding each share separately would not add
-  -- back up. Survivors keep their clean numbers and the durak takes the
-  -- remainder. On a draw there is nobody to absorb it, so nudge whichever
-  -- entries were rounded furthest from their exact value.
-  if p_durak_seat <> -1 then
-    survivors := 0;
-    for i in 1..n loop
-      if seats[i] <> p_durak_seat then survivors := survivors + deltas[i]; end if;
-    end loop;
-    for i in 1..n loop
-      if seats[i] = p_durak_seat then deltas[i] := -survivors; end if;
-    end loop;
-  else
-    residual := 0;
-    for i in 1..n loop residual := residual + deltas[i]; end loop;
-    guard := 0;
-    while residual <> 0 and guard < 100 loop
-      guard := guard + 1;
-      step := case when residual > 0 then -1 else 1 end;
-      best := 1;
-      best_want := -1000000;
-      for i in 1..n loop
-        want := step * (raw[i] - deltas[i]);
-        if want > best_want then
-          best_want := want;
-          best := i;
-        end if;
-      end loop;
-      deltas[best] := deltas[best] + step;
-      residual := residual + step;
-    end loop;
-  end if;
-
-  -- Nobody drops below the floor.
-  for i in 1..n loop
-    if ratings[i] + deltas[i] < floor_at then
-      deltas[i] := floor_at - ratings[i];
-    end if;
-  end loop;
-
-  for i in 1..n loop
-    if p_durak_seat = -1 then
-      update profiles set rating = rating + deltas[i], draws = draws + 1
+      update profiles
+         set draws = draws + 1,
+             expected_duraks = expected_duraks + share
        where id = ids[i];
     elsif seats[i] = p_durak_seat then
-      update profiles set rating = rating + deltas[i], losses = losses + 1
+      update profiles
+         set losses = losses + 1,
+             expected_duraks = expected_duraks + share
        where id = ids[i];
     else
-      update profiles set rating = rating + deltas[i], wins = wins + 1
+      update profiles
+         set wins = wins + 1,
+             expected_duraks = expected_duraks + share
        where id = ids[i];
     end if;
-    payload := payload || jsonb_build_object(ids[i]::text, deltas[i]);
+
+    select public.score(wins + losses + draws, losses, expected_duraks)
+      into after
+      from profiles where id = ids[i];
+
+    payload := payload || jsonb_build_object(ids[i]::text, after - before);
   end loop;
 
   durak_uuid := null;
@@ -543,7 +476,7 @@ begin
   end if;
 
   update games
-     set status = 'finished', durak_id = durak_uuid, rating_delta = payload
+     set status = 'finished', durak_id = durak_uuid, score_delta = payload
    where id = p_game
   returning * into row;
 

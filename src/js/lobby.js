@@ -8,7 +8,8 @@ import {
 import { readableError } from './supabase.js';
 import { session } from './auth.js';
 import { newGame } from './durak.js';
-import { formatRatingDelta, formatRating } from './elo.js';
+import { formatScore } from './score.js';
+import { scoreOf } from './auth.js';
 import { CONFIG } from './config.js';
 import { $, $$, show, setText, clear, toast, relativeTime, deltaClass } from './ui.js';
 
@@ -128,7 +129,7 @@ function renderOpen(games) {
     const meta = document.createElement('span');
     meta.className = 'row__meta';
     meta.textContent =
-      `${formatRating(host?.rating)} · ${seated} of ${game.max_players} seated · ` +
+      `${formatScore(scoreOf(host))} · ${seated} of ${game.max_players} seated · ` +
       `opened ${relativeTime(game.created_at)}`;
 
     const btn = document.createElement('button');
@@ -148,7 +149,7 @@ function renderHistory(games) {
   show($('#no-history'), games.length === 0);
 
   for (const game of games) {
-    const delta = game.rating_delta?.[session.user.id];
+    const delta = game.score_delta?.[session.user.id];
     const numeric = delta === undefined || delta === null ? null : Number(delta);
     const opponents = (game.players ?? [])
       .filter((p) => p.player_id !== session.user.id)
@@ -167,7 +168,7 @@ function renderHistory(games) {
 
     const d = document.createElement('span');
     d.className = `delta ${deltaClass(numeric)}`;
-    d.textContent = formatRatingDelta(numeric);
+    d.textContent = formatScore(numeric);
 
     li.append(outcome, meta, d);
     list.append(li);
