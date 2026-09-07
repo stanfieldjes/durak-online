@@ -423,7 +423,84 @@ body {
 
 .felt__trump.is-red { color: #ff8b83; }
 
-.felt__bar-right { display: flex; align-items: center; gap: 0.3rem; }
+.felt__bar-right { display: flex; align-items: center; gap: 0.6rem; }
+
+/* Volume: a short slider that stays out of the way until reached for. */
+.volume {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.volume__icon {
+  font-size: var(--step--1);
+  color: rgba(255, 255, 255, 0.7);
+  width: 1ch;
+  text-align: center;
+  line-height: 1;
+}
+
+.volume__icon.is-silent { color: var(--red-soft); }
+
+.volume__slider {
+  --fill: 70%;
+  -webkit-appearance: none;
+  appearance: none;
+  width: clamp(70px, 14vw, 110px);
+  height: 18px;
+  background: transparent;
+  cursor: pointer;
+  margin: 0;
+}
+
+/* The filled portion has to be painted onto the track, since a range input
+   gives no way to style "up to the handle" on its own. */
+.volume__slider::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    var(--chalk) 0 var(--fill),
+    rgba(255, 255, 255, 0.25) var(--fill) 100%
+  );
+}
+
+.volume__slider::-moz-range-track {
+  height: 4px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.25);
+}
+
+.volume__slider::-moz-range-progress {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--chalk);
+}
+
+.volume__slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 13px;
+  height: 13px;
+  margin-top: -4.5px;
+  border-radius: 50%;
+  background: var(--chalk);
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+.volume__slider::-moz-range-thumb {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: var(--chalk);
+  border: 1px solid rgba(0, 0, 0, 0.4);
+}
+
+.volume__slider:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--red-bright); outline-offset: 2px; }
+.volume__slider:focus-visible::-moz-range-thumb { outline: 2px solid var(--red-bright); outline-offset: 2px; }
 
 .btn--corner { padding: 0.3rem 0.7rem; color: rgba(255, 255, 255, 0.6); }
 .btn--corner:hover { color: #fff; background: rgba(0, 0, 0, 0.25); }

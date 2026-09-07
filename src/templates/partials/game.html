@@ -15,7 +15,12 @@
     <div class="felt__bar">
       <span class="felt__trump" id="trump-label"></span>
       <span class="felt__bar-right">
-        <button type="button" class="btn btn--quiet btn--corner" id="act-mute" aria-pressed="false">Sound on</button>
+        <label class="volume" for="act-volume">
+          <span class="volume__icon" id="volume-icon" aria-hidden="true">&#9834;</span>
+          <input type="range" id="act-volume" class="volume__slider"
+                 min="0" max="100" step="1" value="70"
+                 aria-label="Sound volume">
+        </label>
         <button type="button" class="btn btn--quiet btn--corner" id="act-leave">Leave</button>
       </span>
     </div>

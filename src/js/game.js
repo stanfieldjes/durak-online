@@ -42,7 +42,7 @@ import {
   DRAW_FLIGHT_MS,
   DRAW_STAGGER_MS,
 } from './fx.js';
-import { play as playSound, isMuted, toggleMuted, setSoundActive } from './sound.js';
+import { play as playSound, getVolume, setVolume, setSoundActive } from './sound.js';
 import { $, show, setText, clear, toast, cardEl } from './ui.js';
 
 /** How long the finished table stays on screen before the scores appear. */
@@ -106,16 +106,24 @@ export function initGame() {
   $('#start-now').addEventListener('click', onStartNow);
   $('#result-again').addEventListener('click', () => { location.hash = '#/'; });
 
-  const mute = $('#act-mute');
-  const paintMute = () => {
-    setText(mute, isMuted() ? 'Sound off' : 'Sound on');
-    mute.setAttribute('aria-pressed', String(isMuted()));
+  const slider = $('#act-volume');
+  const icon = $('#volume-icon');
+  const paintVolume = () => {
+    const level = getVolume();
+    slider.value = String(Math.round(level * 100));
+    // The track fills up to the handle, which needs the current value as a
+    // percentage since CSS cannot read an input's value on its own.
+    slider.style.setProperty('--fill', `${Math.round(level * 100)}%`);
+    icon.textContent = level === 0 ? '\u2715' : '\u266A';
+    icon.classList.toggle('is-silent', level === 0);
   };
-  mute.addEventListener('click', () => {
-    toggleMuted();
-    paintMute();
+  slider.addEventListener('input', () => {
+    setVolume(Number(slider.value) / 100);
+    paintVolume();
   });
-  paintMute();
+  // A card sound on release gives an immediate sense of the new level.
+  slider.addEventListener('change', () => playSound('play'));
+  paintVolume();
 }
 
 export async function enterGame(gameId) {
