@@ -1,7 +1,5 @@
 <section class="panel panel--ranks" data-route="leaderboard" hidden>
-  <h1 class="display">Ranks</h1>
-  <p class="lede">Score is how much better you do than the tables you play would predict. Positive is good.</p>
-
+  <h1 class="display">Leaderboard</h1>
   <table class="ranks">
     <thead>
       <tr>
@@ -10,31 +8,23 @@
         <th scope="col">Games</th>
         <th scope="col">Durak</th>
         <th scope="col">Expected</th>
-        <th scope="col">Score</th>
+        <th scope="col">
+          <span class="th-info">
+            Score
+            <button type="button" class="info" aria-describedby="score-tip">
+              <span aria-hidden="true">i</span>
+              <span class="sr-only">Score Calculation</span>
+            </button>
+            <span class="tip" id="score-tip" role="tooltip">
+              score = (expected durak rate &minus; actual durak rate) &times; 100
+            </span>
+          </span>
+        </th>
       </tr>
     </thead>
     <tbody id="ranks-body"></tbody>
   </table>
-
+ 
   <p class="empty" id="no-ranks" hidden>No finished games yet.</p>
-
-  <div class="explainer">
-    <h2 class="explainer__title">How score is calculated</h2>
-    <p>
-      Every game has exactly one durak, so at a table of <em>n</em> players your
-      share of the blame is <em>1/n</em> — half at a two-player table, a third
-      at three, a quarter at four. Add that up across your games and you have
-      how often you <em>should</em> have been the durak. Score is the gap
-      between that and how often you actually were:
-    </p>
-    <p class="explainer__formula">
-      score = (expected durak rate &minus; actual durak rate) &times; 100
-    </p>
-    <p>
-      Say you play 5 games: 1 with two players, 3 with three, 1 with four.
-      That expects
-      <span class="explainer__sum">(1 &times; &frac12; + 3 &times; &frac13; + 1 &times; &frac14;) &divide; 5 = 35%</span>.
-      If you have a durak rate of 30%, you score <strong>+5</strong>; If you have a durak rate of 40% you score <strong>&minus;5</strong>.
-    </p>
-  </div>
 </section>
+ 
