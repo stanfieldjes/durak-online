@@ -74,7 +74,7 @@ defender can answer. The defender can be beating one card while somebody throws
 in another.
 
 **Ending a round.** When the defender beats everything, nobody has to confirm
-anything: the table stays up for three seconds so everyone sees the defence
+anything: the table stays up for ten seconds so everyone sees the defence
 (attackers can still throw in during that time, with a countdown under the
 prompt), then clears itself. When the defender takes, attackers get a Done
 button and the defender picks the cards up once every attacker has pressed it.
@@ -84,8 +84,10 @@ same pause.
 
 The engine cannot keep time, so the self-clearing is a `clear` move that every
 browser at the table submits when its countdown ends. The version check below
-makes sure exactly one of them lands. `CLEAR_DELAY_MS` in `game.js` sets the
-pause.
+makes sure exactly one of them lands, and `submit_move()` refuses a clear that
+arrives before the pause is over, so an out-of-date or modified page cannot cut
+it short. The pause is the `clear_delay_ms` column on `games` (default 10000);
+see `supabase/migration-clear-delay.sql` for how to change it.
 
 Not implemented: transferring the attack (`perevodnoy`), the five-card cap on
 the opening bout, and a turn clock. `config.json` has a `turnSeconds` slot

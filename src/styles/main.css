@@ -834,8 +834,10 @@ button.card.is-selected {
   margin: 0 0 1rem;
 }
 
-.result__elo.delta--up { color: var(--green-bright); }
-.result__elo.delta--down { color: var(--red-soft); }
+/* Higher specificity than .result__elo, which sets the base colour. */
+.result__elo.score--up { color: var(--green-bright); }
+.result__elo.score--down { color: var(--score-down); }
+.result__elo.score--even { color: var(--chalk); }
 
 .result__table {
   list-style: none;
@@ -849,11 +851,15 @@ button.card.is-selected {
 
 .result__table li {
   display: flex;
-  justify-content: space-between;
-  gap: 1rem;
+  align-items: baseline;
+  gap: 0.6rem;
   padding: 0.35rem 0.6rem;
   border-bottom: 1px solid var(--rail-line);
 }
+
+.result__name { margin-right: auto; text-align: left; }
+.result__score { min-width: 3ch; text-align: right; }
+.result__change { min-width: 5ch; text-align: right; }
 
 .result__table li.is-durak { color: var(--red-soft); font-weight: 500; }
 

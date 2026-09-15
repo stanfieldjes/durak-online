@@ -55,6 +55,8 @@ create table if not exists public.games (
   version      int  not null default 0,   -- mirrors state->>'version'
   durak_id     uuid references public.profiles(id),
   score_delta  jsonb,
+  -- How long a finished round stays on the table before it may be cleared.
+  clear_delay_ms int not null default 10000 check (clear_delay_ms between 0 and 60000),
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
@@ -332,6 +334,7 @@ declare
   defender  int;
   attacker  int;
   table_len int;
+  log_len   int;
 begin
   if me is null then
     raise exception 'not authenticated';
@@ -376,6 +379,17 @@ begin
      or p_state->>'trump' is distinct from row.state->>'trump'
      or (p_state->>'playerCount')::int is distinct from (row.state->>'playerCount')::int then
     raise exception 'the deal cannot change mid-game';
+  end if;
+
+  -- A clear (the table emptying itself after a round) must wait until the
+  -- position has been on show for the table's clear_delay_ms. updated_at is
+  -- when that position was written, so one slow or modified browser cannot
+  -- cut the pause short for everyone. The engine marks a clear by making
+  -- {"t":"clear"} the first new log entry.
+  log_len := coalesce(jsonb_array_length(row.state->'log'), 0);
+  if p_state->'log'->log_len->>'t' = 'clear'
+     and now() < row.updated_at + row.clear_delay_ms * interval '1 millisecond' then
+    raise exception 'too early to clear the table';
   end if;
 
   update games

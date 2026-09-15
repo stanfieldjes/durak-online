@@ -371,8 +371,10 @@ export function applyMove(prev, seat, move) {
 
     case 'clear': {
       if (!canClear(state, seat)) throw new IllegalMove('The table is not ready to clear.');
-      // Deliberately not logged with a seat: whichever browser's timer fires
-      // first, the resulting position must be identical.
+      // Logged without a seat: whichever browser's timer fires first, the
+      // resulting position must be identical. The entry itself is how
+      // submit_move() recognises a clear and holds it to the table's delay.
+      state.log.push({ t: 'clear' });
       return finishMove(prev, state.taking ? resolveTake(state) : resolveBeaten(state));
     }
 

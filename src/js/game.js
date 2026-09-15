@@ -29,6 +29,7 @@ import {
   watchGame,
   getGameVersion,
   isStaleError,
+  isTooEarlyError,
 } from './db.js';
 import { readableError } from './supabase.js';
 import { session, scoreOf } from './auth.js';
@@ -51,8 +52,14 @@ import { $, show, setText, clear, toast, cardEl, paintScore } from './ui.js';
  * How long a finished round stays on the table before it clears itself: the
  * defence that beat the last card, or the card that filled the table on a
  * take. Attackers can still throw in while it is showing.
+ *
+ * The real value lives on the games row (clear_delay_ms), and submit_move()
+ * refuses a clear that comes sooner. Every browser reads it from there, so a
+ * stale or modified page cannot cut the pause short. This fallback is only
+ * used if the column has not been migrated yet.
  */
-const CLEAR_DELAY_MS = 10000;
+const FALLBACK_CLEAR_DELAY_MS = 10000;
+const clearDelayMs = () => Number(game?.clear_delay_ms ?? FALLBACK_CLEAR_DELAY_MS);
 
 /** How long the finished table stays on screen before the scores appear. */
 const RESULT_DELAY_MS = 2200;
@@ -457,6 +464,11 @@ function advanceLocally(move) {
  * `revealed` until the animation lands (see runEffects and release()).
  */
 function present(previous, next, { quiet = false } = {}) {
+  // A dropped local move can leave the log shorter than what we already
+  // reacted to. Wind the marker back, or the real version of those events
+  // (say, the table clearing a second later) would arrive silently.
+  if (next?.log && next.log.length < announcedThrough) announcedThrough = next.log.length;
+
   // A position at version 0 is a table that has just been dealt.
   const opening = !quiet && Boolean(next) && next.version === 0 && !next.finished && !dealPlayed;
 
@@ -715,7 +727,7 @@ function scheduleClear() {
   cancelClear();
   clearArmedFor = s.version;
   if (mySeat !== null && canClear(s, mySeat)) {
-    clearTimer = setTimeout(fireClear, CLEAR_DELAY_MS);
+    clearTimer = setTimeout(fireClear, clearDelayMs());
   }
 }
 
@@ -773,6 +785,16 @@ async function drain() {
         state = rebuild();
         render();
       } catch (error) {
+        if (isTooEarlyError(error)) {
+          // Our countdown finished before the database's did (a clock hiccup,
+          // or a delay changed mid-round). Put the table back and try again
+          // shortly; the version check still guarantees it clears only once.
+          pending = pending.filter((m) => m.type !== 'clear');
+          adopt(confirmed);
+          clearTimeout(clearTimer);
+          clearTimer = setTimeout(fireClear, 1000);
+          continue;
+        }
         if (!isStaleError(error)) {
           pending = [];
           toast(readableError(error));
@@ -1154,7 +1176,7 @@ function renderPrompt() {
   if (counting && promptBarFor !== clearArmedFor) {
     el.classList.remove('is-clearing');
     void el.offsetWidth; // restart the animation for a new countdown
-    el.style.setProperty('--clear-ms', `${CLEAR_DELAY_MS}ms`);
+    el.style.setProperty('--clear-ms', `${clearDelayMs()}ms`);
     promptBarFor = clearArmedFor;
   }
   if (!counting) promptBarFor = null;
@@ -1223,9 +1245,8 @@ async function showResult() {
   setText($('#result-title'), title);
 
   const figure = $('#result-elo');
+  paintScore(figure, numeric);
   setText(figure, numeric === null ? '' : `${formatScore(numeric)} score`);
-  figure.classList.toggle('delta--down', numeric !== null && numeric < 0);
-  figure.classList.toggle('delta--up', numeric !== null && numeric > 0);
 
   const list = $('#result-table');
   clear(list);
@@ -1238,14 +1259,21 @@ async function showResult() {
     if (game.durak_id === seatRow.player_id) li.classList.add('is-durak');
 
     const name = document.createElement('span');
+    name.className = 'result__name';
     name.textContent = seatRow.profile?.username ?? `Seat ${seatRow.seat + 1}`;
 
-    const change = document.createElement('span');
-    change.className = value === null ? '' : value >= 0 ? 'delta--up' : 'delta--down';
-    change.textContent =
-      value === null ? '—' : `${formatScore(settled)}  (${formatScore(value)})`;
+    // The score and this game's change to it are coloured independently:
+    // someone can sit at +12 overall and still have just lost 4.
+    const total = document.createElement('span');
+    total.className = 'result__score';
+    paintScore(total, settled);
 
-    li.append(name, change);
+    const change = document.createElement('span');
+    change.className = 'result__change';
+    paintScore(change, value);
+    change.textContent = value === null ? '(—)' : `(${formatScore(value)})`;
+
+    li.append(name, total, change);
     list.append(li);
   }
 

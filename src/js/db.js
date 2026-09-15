@@ -34,7 +34,7 @@ export async function getLeaderboard(limit = 50) {
 /* ---------------- games ---------------- */
 
 const GAME_COLUMNS = `
-  id, status, host_id, max_players, seed, state, version, durak_id, score_delta, created_at,
+  id, status, host_id, max_players, seed, state, version, durak_id, score_delta, created_at, clear_delay_ms,
   players:game_players ( seat, player_id, profile:profiles ( id, username, wins, losses, draws, expected_duraks ) )
 `;
 
@@ -138,6 +138,11 @@ export async function submitMove(gameId, state, baseVersion) {
 
 export function isStaleError(error) {
   return /stale position|advance the position/i.test(error?.message ?? '');
+}
+
+/** The database refused a clear because the table has not been on show long enough. */
+export function isTooEarlyError(error) {
+  return /too early to clear/i.test(error?.message ?? '');
 }
 
 /**
