@@ -52,7 +52,7 @@ import { $, show, setText, clear, toast, cardEl, paintScore } from './ui.js';
  * defence that beat the last card, or the card that filled the table on a
  * take. Attackers can still throw in while it is showing.
  */
-const CLEAR_DELAY_MS = 3000;
+const CLEAR_DELAY_MS = 10000;
 
 /** How long the finished table stays on screen before the scores appear. */
 const RESULT_DELAY_MS = 2200;
