@@ -76,11 +76,15 @@ in another.
 **Ending a round.** When the defender beats everything, nobody has to confirm
 anything: the table stays up for ten seconds so everyone sees the defence
 (attackers can still throw in during that time, with a countdown under the
-prompt), then clears itself. When the defender takes, attackers get a Done
-button and the defender picks the cards up once every attacker has pressed it.
-If no more cards can go down (six on the table, or nothing more the defender
-could receive), nobody presses Done; the cards go to the defender after the
-same pause.
+prompt), then clears itself. Attackers who are finished can press Done to skip
+the wait; once every attacker has, the table clears straight away. A new card
+thrown in resets everyone's Done.
+
+When the defender takes, attackers get a Done button and the defender picks the
+cards up once every attacker has pressed it (an empty hand counts as done). If
+no more cards can go down (six on the table, or nothing more the defender could
+receive), nobody has to press Done; the cards go to the defender after the same
+pause, and Done skips it.
 
 The engine cannot keep time, so the self-clearing is a `clear` move that every
 browser at the table submits when its countdown ends. The version check below

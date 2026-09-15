@@ -10,13 +10,19 @@
  * the very first card of a round is reserved for the primary attacker.
  *
  * How a round ends:
- *   - Defender beats everything: nobody has to confirm anything. The table
- *     waits on a `clear` move, which browsers submit after a short pause so
- *     everyone sees the defence (and can still throw in during it).
- *   - Defender takes: attackers throw in what they like and press Done
- *     (`pass`). Once all of them have, the defender picks the table up.
+ *   - Defender beats everything: the table waits on a `clear` move, which
+ *     browsers submit after a pause so everyone sees the defence (attackers
+ *     can still throw in during it). Attackers may press Done (`pass`) to skip
+ *     the rest of the pause; once every attacker has, the table clears.
+ *   - Defender takes: attackers throw in what they like and press Done.
+ *     Once all of them have, the defender picks the table up.
  *   - Defender takes and no more cards can go down: nobody has to press Done;
- *     the table waits on the same delayed `clear`.
+ *     the table waits on the same delayed `clear`, and Done skips it.
+ *
+ * An attacker with an empty hand counts as done without pressing anything,
+ * but can still press Done to skip a pause. A pause is only ever skipped by
+ * someone actually pressing it, so the last card is never whisked away
+ * unseen just because everyone happens to be out of cards.
  *
  * Because several players can act at once, every position carries a `version`
  * that increments on each move. Writers submit the version they built on and
@@ -219,15 +225,17 @@ export function legalDefenses(state, seat, slotIndex) {
 }
 
 /**
- * "Done" exists only while the defender is taking, and only while another
- * card could still go down. A beaten table clears itself, and a full one has
- * nothing left to decide.
+ * When an attacker gets a Done button:
+ *   - during a pause before the table clears (see canClear), to skip it;
+ *   - while the defender is taking and more cards could still go down, to say
+ *     they have finished throwing in. An empty hand already counts as done.
+ * Never while the defender still has attacks to answer.
  */
 export function canPass(state, seat) {
   if (state.finished || state.out[seat]) return false;
-  if (seat === state.defender || !state.taking) return false;
-  if (attackCapacity(state) <= 0) return false;
-  return state.table.length > 0 && !state.passed[seat];
+  if (seat === state.defender || state.table.length === 0 || state.passed[seat]) return false;
+  if (canClear(state)) return true;
+  return state.taking && state.hands[seat].length > 0;
 }
 
 /**
@@ -297,25 +305,23 @@ function removeFromHand(hand, card) {
 }
 
 /**
- * A card landing on the table gives every attacker a fresh chance to throw in.
+ * A card landing on the table gives every attacker a fresh chance to throw in,
+ * so every earlier Done is forgotten.
  *
- * Attackers are NOT passed automatically just because they hold no matching
- * rank: a round ends when the attackers say it ends, not when the engine
- * decides for them. The one exception is a player with an empty hand, who has
- * nothing to decide.
+ * `passed` records only an actual press. Attackers are not passed just because
+ * they hold no matching rank: a round ends when the attackers say it ends, not
+ * when the engine decides for them. An empty hand is treated as done by
+ * allAttackersDone() instead, so it never holds a take up, but it cannot on
+ * its own cut short the pause before a table clears.
  */
 function refreshPasses(state) {
   for (let seat = 0; seat < state.playerCount; seat++) {
-    if (state.out[seat] || seat === state.defender) {
-      state.passed[seat] = true;
-      continue;
-    }
-    state.passed[seat] = state.hands[seat].length === 0;
+    state.passed[seat] = state.out[seat] || seat === state.defender;
   }
 }
 
-function allAttackersPassed(state) {
-  return attackerSeats(state).every((s) => state.passed[s]);
+function allAttackersDone(state) {
+  return attackerSeats(state).every((s) => state.passed[s] || state.hands[s].length === 0);
 }
 
 /**
@@ -366,6 +372,11 @@ export function applyMove(prev, seat, move) {
       if (!canPass(state, seat)) throw new IllegalMove('You cannot pass right now.');
       state.passed[seat] = true;
       state.log.push({ t: 'pass', seat });
+      // Everyone done during the pause over a beaten table: skip the rest of
+      // it. (A take is settled by maybeEndRound below, the same as always.)
+      if (!state.taking && openSlots(state) === 0 && allAttackersDone(state)) {
+        return finishMove(prev, resolveBeaten(state));
+      }
       break;
     }
 
@@ -508,14 +519,13 @@ function illegalAttackReason(state, seat) {
 }
 
 /**
- * The only round that closes on the spot is a take every attacker has said
- * Done to. Every other ending — a beaten table, or a take with no room left —
- * waits on the delayed `clear` move so the final card is seen before the
- * table empties. See canClear().
+ * A take closes as soon as every attacker is done. A beaten table closes when
+ * every attacker presses Done (handled in the `pass` move) or when the pause
+ * runs out (the `clear` move). See canClear().
  */
 function maybeEndRound(state) {
   if (state.table.length === 0) return state;
-  if (state.taking && allAttackersPassed(state)) return resolveTake(state);
+  if (state.taking && allAttackersDone(state)) return resolveTake(state);
   return state;
 }
 
@@ -651,17 +661,23 @@ export function describe(state, seat) {
   }
 
   const canThrow = legalAttacks(state, seat).length > 0;
+  const done = state.passed[seat];
   if (state.taking) {
-    if (full) return 'They are taking. No room for more cards.';
-    if (state.passed[seat]) return 'They are taking. Waiting for the other attackers.';
+    if (full) {
+      return done
+        ? 'They are taking. Waiting for the other attackers, or a moment.'
+        : 'They are taking. No room for more cards — press Done to hand them over now.';
+    }
+    if (done || state.hands[seat].length === 0) return 'They are taking. Waiting for the other attackers.';
     return canThrow
       ? 'They are taking — throw in anything that matches, then press Done.'
       : 'They are taking. Press Done when you are finished.';
   }
   if (openSlots(state) === 0) {
+    if (done) return 'All beaten. Waiting for the other attackers, or the table clears in a moment.';
     return canThrow
-      ? 'All beaten. Throw in a matching rank before the table clears.'
-      : 'All beaten. The table clears in a moment.';
+      ? 'All beaten. Throw in a matching rank, or press Done to clear the table.'
+      : 'All beaten. Press Done to clear the table, or it clears in a moment.';
   }
   return canThrow ? 'Throw in a matching rank, or wait for the defence.' : 'Waiting for the defender.';
 }

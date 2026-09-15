@@ -357,9 +357,9 @@ console.log('Checking that a live opponent elsewhere at the table blocks a force
 console.log('Checking that defending the last card ends the game without a pass click...');
 {
   // Defender plays their last card, it beats the only open attack, the deck
-  // is empty, and the OTHER player still holds cards. Nobody should be asked
-  // to click anything: no Done button is offered, and the only move left is
-  // the automatic clear that browsers submit once the card has been seen.
+  // is empty, and the OTHER player still holds cards. Nobody has to click
+  // anything: the table waits for the automatic clear. The attacker may press
+  // Done to skip the pause, and either way ends the game the same.
   for (const players of [2, 3, 4]) {
     let s = newGame(2, players);
     s = { ...s, deck: [], table: [], discard: 30 };
@@ -374,14 +374,19 @@ console.log('Checking that defending the last card ends the game without a pass 
     const beaten = applyMove(s, 0, { type: 'defend', card: { r: '8', s: 'D' }, slot: 0 });
     check(`${players}p: the defended card stays on the table to be seen`,
       !beaten.finished && beaten.table.length === 1 && beaten.table[0].def);
-    check(`${players}p: nobody is offered a Done button`,
-      [0, 1, 2, 3].slice(0, players).every((seat) => !canPass(beaten, seat)));
+    check(`${players}p: the defender is never offered Done`, !canPass(beaten, 0));
+    check(`${players}p: the attacker may press Done to skip the pause`, canPass(beaten, 1));
     check(`${players}p: the table is ready to clear`, canClear(beaten, 1));
 
     const after = applyMove(beaten, 1, { type: 'clear' });
     check(`${players}p: clearing ends the game`, after.finished);
     check(`${players}p: the defender wins, the still-loaded opponent is the durak`,
       after.durak === 1);
+
+    // Seats 2+ hold nothing, so they already count as done: seat 1's Done alone skips.
+    const skipped = applyMove(beaten, 1, { type: 'pass' });
+    check(`${players}p: Done skips straight to the same ending`,
+      skipped.finished && skipped.durak === 1 && skipped.discard === after.discard);
   }
 
   // The same shape, but the OTHER player has also emptied their hand: still
@@ -403,20 +408,21 @@ console.log('Checking that defending the last card ends the game without a pass 
 console.log('Checking when Done is offered...');
 {
   const rng = makeRng(4242);
-  let beatenTables = 0, takesWithRoom = 0, fullTakes = 0;
+  let pauses = 0, takesWithRoom = 0, fullTakes = 0, skips = 0;
   for (let g = 0; g < 400; g++) {
     let state = newGame(g + 900, 2 + (g % 3));
     let guard = 0;
     while (!state.finished && guard++ < 3000) {
+      const owesAnswer = !state.taking && state.table.some((t) => !t.def);
       for (const seat of activeSeats(state)) {
-        if (seat === state.defender) continue;
         const offered = canPass(state, seat);
-        if (!state.taking && offered) fail(`game ${g}: Done offered while the defender is not taking`);
-        if (state.taking && attackCapacity(state) <= 0 && offered) {
-          fail(`game ${g}: Done offered with no room for another card`);
+        if (seat === state.defender && offered) fail(`game ${g}: Done offered to the defender`);
+        if (owesAnswer && offered) fail(`game ${g}: Done offered while the defender still owes an answer`);
+        if (state.taking && attackCapacity(state) > 0 && offered && state.hands[seat].length === 0) {
+          fail(`game ${g}: Done offered to an empty hand during a take with room`);
         }
       }
-      if (state.table.length && !state.taking && state.table.every((t) => t.def)) beatenTables++;
+      if (canClear(state)) pauses++;
       if (state.taking && attackCapacity(state) > 0) takesWithRoom++;
       if (state.taking && attackCapacity(state) <= 0) fullTakes++;
 
@@ -424,14 +430,19 @@ console.log('Checking when Done is offered...');
       if (!actors.length) { fail(`game ${g}: stalled`); break; }
       const seat = actors[Math.floor(rng() * actors.length)];
       const moves = availableMoves(state, seat);
-      state = applyMove(state, seat, moves[Math.floor(rng() * moves.length)]);
+      const move = moves[Math.floor(rng() * moves.length)];
+      const next = applyMove(state, seat, move);
+      if (move.type === 'pass' && canClear(state) && next.table.length === 0) skips++;
+      state = next;
     }
   }
-  check('beaten tables occur', beatenTables > 0);
+  check('pauses before a clear occur', pauses > 0);
   check('takes with room occur', takesWithRoom > 0);
   check('full takes occur', fullTakes > 0);
+  check('Done actually skips pauses in play', skips > 0);
 
-  // Six on the table and the defender takes: no Done, straight to clear.
+  // Six on the table and the defender takes: the attacker is not needed, but
+  // Done skips the pause and hands the cards over.
   let s = newGame(5, 2);
   s = { ...s, deck: [], discard: 12, trump: 'S', attacker: 0, defender: 1, taking: false };
   s.hands[0] = [{ r: '9', s: 'C' }];
@@ -447,11 +458,15 @@ console.log('Checking when Done is offered...');
   ];
   s.passed = [false, true]; s.out = [false, false];
   const took = applyMove(s, 1, { type: 'take' });
-  check('six on the table: the attacker is not asked for Done', !canPass(took, 0));
+  check('six on the table: the take waits rather than resolving on its own', took.table.length === 6);
   check('six on the table: the table is ready to clear', canClear(took, 0));
+  check('six on the table: Done is offered to skip the pause', canPass(took, 0));
   const cleared = applyMove(took, 0, { type: 'clear' });
   check('six on the table: clearing hands the cards to the defender',
     cleared.table.length === 0 && cleared.log.some((e) => e.t === 'taken'));
+  const skippedTake = applyMove(took, 0, { type: 'pass' });
+  check('six on the table: Done hands them over at once, same result',
+    skippedTake.table.length === 0 && JSON.stringify(skippedTake.hands) === JSON.stringify(cleared.hands));
 
   // A take with room left still waits for Done.
   let t = newGame(8, 2);
@@ -460,6 +475,40 @@ console.log('Checking when Done is offered...');
   t = applyMove(t, t.defender, { type: 'take' });
   check('a take with room left offers Done to the attacker', canPass(t, t.attacker));
   check('a take with room left does not clear on its own', !canClear(t, t.attacker));
+
+  // Three attackers on a beaten table: the pause is skipped only once all of
+  // them press Done, and a throw-in in between wipes the earlier presses.
+  let m = newGame(21, 4);
+  m = { ...m, deck: m.deck, taking: false, attacker: 0, defender: 1, out: [false, false, false, false] };
+  m.trump = 'S';
+  m.hands[0] = [{ r: '6', s: 'H' }, { r: 'A', s: 'C' }];
+  m.hands[1] = [{ r: 'K', s: 'D' }, { r: 'K', s: 'C' }];
+  m.hands[2] = [{ r: '6', s: 'C' }];
+  m.hands[3] = [{ r: 'Q', s: 'H' }];
+  m.table = [{ atk: { r: '6', s: 'D' }, def: null }];
+  m.passed = [false, true, false, false];
+  const beaten = applyMove(m, 1, { type: 'defend', card: { r: 'K', s: 'D' }, slot: 0 });
+  const one = applyMove(beaten, 0, { type: 'pass' });
+  const two = applyMove(one, 3, { type: 'pass' });
+  check('beaten table, 2 of 3 attackers done: still waiting', two.table.length === 1 && canClear(two));
+  check('an attacker who pressed Done is not offered it again', !canPass(two, 0));
+  const all = applyMove(two, 2, { type: 'pass' });
+  check('beaten table, all 3 attackers done: cleared at once', all.table.length === 0 && all.log.some((e) => e.t === 'beaten'));
+
+  const thrown = applyMove(one, 2, { type: 'attack', card: { r: '6', s: 'C' } });
+  check('a throw-in wipes earlier Done presses', !thrown.passed[0]);
+  check('no Done while the new card is unanswered', [0, 2, 3].every((x) => !canPass(thrown, x)));
+
+  // Every attacker already out of cards: the defence still gets its pause.
+  let e = newGame(4, 3);
+  e = { ...e, taking: false, attacker: 0, defender: 1, out: [false, false, false] };
+  e.hands[0] = []; e.hands[2] = [];
+  e.hands[1] = [{ r: 'A', s: e.trump }, { r: '7', s: e.trump === 'S' ? 'H' : 'S' }];
+  e.table = [{ atk: { r: '6', s: e.trump }, def: null }];
+  e.passed = [false, true, false];
+  const quiet = applyMove(e, 1, { type: 'defend', card: { r: 'A', s: e.trump }, slot: 0 });
+  check('empty-handed attackers alone never skip the pause', quiet.table.length === 1 && canClear(quiet));
+  check('but they can still press Done to skip it', canPass(quiet, 0) && applyMove(quiet, 0, { type: 'pass' }).table.length === 0);
 }
 
 /* ---- forced endings and the draw that survives them ------------------- */

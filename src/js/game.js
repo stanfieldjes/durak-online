@@ -700,8 +700,11 @@ function play(move) {
  * first the database refuses it. We then re-read, replay whatever is still
  * legal, and carry on from there.
  */
-/** Queued moves the player actually made, as opposed to the automatic clear. */
-const playerMoves = () => pending.filter((m) => m.type !== 'clear').length;
+/**
+ * Queued card moves (attack, defend, take). A Done or the automatic clear
+ * that gets dropped because the table cleared anyway is not worth a message.
+ */
+const playerMoves = () => pending.filter((m) => m.type !== 'clear' && m.type !== 'pass').length;
 
 /* ------------------------------------------------------------------ */
 /* clearing a finished round                                           */
