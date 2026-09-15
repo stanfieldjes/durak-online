@@ -1,4 +1,5 @@
 import { SUIT_GLYPH, SUIT_NAME, RANKS } from './durak.js';
+import { formatScore } from './score.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -68,6 +69,20 @@ export function relativeTime(iso) {
   const hours = Math.round(mins / 60);
   if (hours < 24) return `${hours}h ago`;
   return `${Math.round(hours / 24)}d ago`;
+}
+
+const SCORE_TONES = ['score--up', 'score--down', 'score--even'];
+
+/**
+ * Write a score into an element and colour it by sign: green above zero, red
+ * below, white at zero (and for someone with no games yet).
+ */
+export function paintScore(el, score) {
+  if (!el) return;
+  const n = score === null || score === undefined ? 0 : Math.round(Number(score));
+  el.textContent = formatScore(score);
+  el.classList.remove(...SCORE_TONES);
+  el.classList.add(n > 0 ? 'score--up' : n < 0 ? 'score--down' : 'score--even');
 }
 
 export function deltaClass(n) {

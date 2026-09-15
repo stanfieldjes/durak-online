@@ -9,6 +9,15 @@
  * throw in a matching rank at any moment — there is no order among them. Only
  * the very first card of a round is reserved for the primary attacker.
  *
+ * How a round ends:
+ *   - Defender beats everything: nobody has to confirm anything. The table
+ *     waits on a `clear` move, which browsers submit after a short pause so
+ *     everyone sees the defence (and can still throw in during it).
+ *   - Defender takes: attackers throw in what they like and press Done
+ *     (`pass`). Once all of them have, the defender picks the table up.
+ *   - Defender takes and no more cards can go down: nobody has to press Done;
+ *     the table waits on the same delayed `clear`.
+ *
  * Because several players can act at once, every position carries a `version`
  * that increments on each move. Writers submit the version they built on and
  * the database rejects the write if it has moved on. See submit_move() in
@@ -209,10 +218,32 @@ export function legalDefenses(state, seat, slotIndex) {
   return state.hands[seat].filter((c) => beats(c, slot.atk, state.trump));
 }
 
+/**
+ * "Done" exists only while the defender is taking, and only while another
+ * card could still go down. A beaten table clears itself, and a full one has
+ * nothing left to decide.
+ */
 export function canPass(state, seat) {
   if (state.finished || state.out[seat]) return false;
-  if (seat === state.defender) return false;
+  if (seat === state.defender || !state.taking) return false;
+  if (attackCapacity(state) <= 0) return false;
   return state.table.length > 0 && !state.passed[seat];
+}
+
+/**
+ * Is the table ready to be cleared without anyone deciding anything?
+ *
+ * True when every attack is beaten, or when the defender is taking and no
+ * more cards fit. Not a player's choice: browsers submit it on a timer (see
+ * game.js), so the last card played stays visible for a moment first. Any
+ * seat still in the game may submit it, and the version check guarantees it
+ * applies once however many browsers try.
+ */
+export function canClear(state, seat) {
+  if (state.finished || state.table.length === 0) return false;
+  if (seat !== undefined && (!Number.isInteger(seat) || state.out[seat])) return false;
+  if (state.taking) return attackCapacity(state) <= 0;
+  return openSlots(state) === 0;
 }
 
 export function canTake(state, seat) {
@@ -231,9 +262,13 @@ export function canAct(state, seat) {
   return legalAttacks(state, seat).length > 0 || canPass(state, seat);
 }
 
-/** Every seat currently allowed to move. Several at once is normal here. */
+/**
+ * Every seat currently allowed to submit a move. Several at once is normal
+ * here. Includes seats that may only submit the automatic `clear`, which
+ * canAct() leaves out because it is not a decision anyone makes.
+ */
 export function seatsToAct(state) {
-  return activeSeats(state).filter((s) => canAct(state, s));
+  return activeSeats(state).filter((s) => canAct(state, s) || canClear(state, s));
 }
 
 export function availableMoves(state, seat) {
@@ -245,6 +280,7 @@ export function availableMoves(state, seat) {
   });
   if (canTake(state, seat)) moves.push({ type: 'take' });
   if (canPass(state, seat)) moves.push({ type: 'pass' });
+  if (canClear(state, seat)) moves.push({ type: 'clear' });
   return moves;
 }
 
@@ -333,12 +369,23 @@ export function applyMove(prev, seat, move) {
       break;
     }
 
+    case 'clear': {
+      if (!canClear(state, seat)) throw new IllegalMove('The table is not ready to clear.');
+      // Deliberately not logged with a seat: whichever browser's timer fires
+      // first, the resulting position must be identical.
+      return finishMove(prev, state.taking ? resolveTake(state) : resolveBeaten(state));
+    }
+
     default:
       throw new IllegalMove('Unknown move.');
   }
 
   state = maybeForcedEnd(state);
   if (!state.finished) state = maybeEndRound(state);
+  return finishMove(prev, state);
+}
+
+function finishMove(prev, state) {
   state.version = prev.version + 1;
   return state;
 }
@@ -459,25 +506,15 @@ function illegalAttackReason(state, seat) {
 }
 
 /**
- * A round closes once no attacker wants to add anything more — except when
- * the defender's hand has just hit zero while everything is beaten. At that
- * point nothing more can be thrown in by anyone, no matter what they hold:
- * there is no defender's hand left to receive it, so attack capacity is zero
- * by construction. That is a hard constraint, not a choice being deferred,
- * so it resolves immediately rather than waiting on "done" clicks that could
- * never change the outcome.
+ * The only round that closes on the spot is a take every attacker has said
+ * Done to. Every other ending — a beaten table, or a take with no room left —
+ * waits on the delayed `clear` move so the final card is seen before the
+ * table empties. See canClear().
  */
 function maybeEndRound(state) {
   if (state.table.length === 0) return state;
-
-  if (!state.taking && openSlots(state) === 0 && state.hands[state.defender].length === 0) {
-    return resolveBeaten(state);
-  }
-
-  if (!allAttackersPassed(state)) return state;
-  if (state.taking) return resolveTake(state);
-  if (openSlots(state) === 0) return resolveBeaten(state);
-  return state; // defender still owes an answer
+  if (state.taking && allAttackersPassed(state)) return resolveTake(state);
+  return state;
 }
 
 /** Defender beat everything: the table is discarded and they attack next. */
@@ -593,10 +630,16 @@ export function describe(state, seat) {
   }
   if (state.out[seat]) return 'You are out of cards. Waiting for the rest.';
 
+  const full = attackCapacity(state) <= 0;
+
   if (seat === state.defender) {
-    if (state.taking) return 'You are taking. Waiting to see what else gets thrown in.';
+    if (state.taking) {
+      return full
+        ? 'You are taking. The cards come to you in a moment.'
+        : 'You are taking. Waiting to see what else gets thrown in.';
+    }
     if (openSlots(state) > 0) return 'Beat what is in front of you, or take the cards.';
-    return 'Everything is beaten. Waiting for the attackers.';
+    return 'Everything is beaten. The table clears in a moment.';
   }
 
   if (state.table.length === 0) {
@@ -604,11 +647,19 @@ export function describe(state, seat) {
       ? 'Your attack — lead a card.'
       : 'Waiting for the attacker to lead.';
   }
+
+  const canThrow = legalAttacks(state, seat).length > 0;
   if (state.taking) {
-    return state.passed[seat]
-      ? 'They are taking. Waiting for the other attackers.'
-      : 'They are taking — throw in anything that matches, then finish.';
+    if (full) return 'They are taking. No room for more cards.';
+    if (state.passed[seat]) return 'They are taking. Waiting for the other attackers.';
+    return canThrow
+      ? 'They are taking — throw in anything that matches, then press Done.'
+      : 'They are taking. Press Done when you are finished.';
   }
-  if (state.passed[seat]) return 'You are done for this round.';
-  return 'Throw in a matching rank, or pass.';
+  if (openSlots(state) === 0) {
+    return canThrow
+      ? 'All beaten. Throw in a matching rank before the table clears.'
+      : 'All beaten. The table clears in a moment.';
+  }
+  return canThrow ? 'Throw in a matching rank, or wait for the defence.' : 'Waiting for the defender.';
 }

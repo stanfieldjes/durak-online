@@ -1,7 +1,7 @@
 import { supabase, readableError } from './supabase.js';
 import { getProfile, createProfile } from './db.js';
-import { $, $$, show, setText } from './ui.js';
-import { computeScore, formatScore } from './score.js';
+import { $, $$, show, setText, paintScore } from './ui.js';
+import { computeScore } from './score.js';
 
 let mode = 'sign-in';
 
@@ -17,15 +17,41 @@ export async function loadSession() {
   return session;
 }
 
+/**
+ * React when the signed-in person actually changes.
+ *
+ * Two rules here, both learned the hard way:
+ *
+ * 1. The callback must not await any Supabase call. supabase-js runs these
+ *    callbacks while holding its auth lock, and every query and RPC needs that
+ *    same lock to read the access token. Awaiting one in here deadlocks the
+ *    client: nothing throws, but every later request hangs forever. The work
+ *    is pushed onto a fresh task with setTimeout so the lock is released first.
+ *
+ * 2. Supabase fires SIGNED_IN every time the tab becomes visible again, and
+ *    TOKEN_REFRESHED roughly hourly. Neither means someone new signed in, and
+ *    re-routing on them would tear down and rebuild the table mid-game. Only a
+ *    change of user id counts.
+ */
 export function onAuthChange(handler) {
-  supabase.auth.onAuthStateChange(async (event) => {
-    if (event === 'SIGNED_OUT') {
-      session.user = null;
-      session.profile = null;
-    } else {
-      await loadSession();
-    }
-    handler(session);
+  supabase.auth.onAuthStateChange((event, next) => {
+    const nextId = next?.user?.id ?? null;
+    const currentId = session.user?.id ?? null;
+    if (nextId === currentId) return;
+
+    setTimeout(async () => {
+      if (!nextId) {
+        session.user = null;
+        session.profile = null;
+      } else {
+        try {
+          await loadSession();
+        } catch (error) {
+          console.error(error);
+        }
+      }
+      handler(session);
+    }, 0);
   });
 }
 
@@ -46,7 +72,7 @@ export function renderWhoami() {
     return;
   }
   setText($('#whoami-name'), session.profile.username);
-  setText($('#whoami-elo'), formatScore(scoreOf(session.profile)));
+  paintScore($('#whoami-elo'), scoreOf(session.profile));
   show(box, true);
 }
 

@@ -1,4 +1,5 @@
--- Durak Online — schema, policies, and RPCs. 2 to 4 players.
+-- Durak Online — schema, policies, and RPCs. Tables seat four; the host can
+-- start as soon as two are seated.
 -- Paste the whole file into the Supabase SQL editor and run it once.
 --
 -- Design rule: the browser never writes to a table directly. Every write goes
@@ -48,7 +49,7 @@ create table if not exists public.games (
   status       text not null default 'waiting'
                check (status in ('waiting', 'active', 'finished', 'abandoned')),
   host_id      uuid not null references public.profiles(id) on delete cascade,
-  max_players  int  not null default 2 check (max_players between 2 and 4),
+  max_players  int  not null default 4 check (max_players between 2 and 4),
   seed         bigint not null,
   state        jsonb,
   version      int  not null default 0,   -- mirrors state->>'version'
@@ -143,31 +144,58 @@ with (security_invoker = on) as
 
 -- --------------------------------------------------------------- functions --
 
--- Open a table for 2 to 4. One waiting table per player, and the seed is
--- issued here so nobody can shop for a deal they like.
-create or replace function public.create_game(p_max_players int default 2)
+-- ------------------------------------------------------------ lobby nudge --
+--
+-- The lobby learns about changes through realtime, and realtime respects RLS.
+-- The moment a table stops being 'waiting', its games row becomes invisible to
+-- everyone not sitting at it, so Supabase sends them nothing: the table would
+-- stay in their lobby list until they refreshed.
+--
+-- Seats are readable by everyone, though. Touching the table's seat rows puts
+-- an UPDATE on the wire that every lobby receives, and the lobby re-reads its
+-- list. Nothing about the seats actually changes.
+create or replace function public.nudge_lobby(p_game uuid)
+returns void
+language sql security definer set search_path = public
+as $$
+  update game_players set joined_at = joined_at where game_id = p_game;
+$$;
+
+revoke all on function public.nudge_lobby(uuid) from public, anon, authenticated;
+-- Deliberately not granted to anyone: only the functions below call it.
+
+-- ------------------------------------------------------------ create_game --
+--
+-- Always four seats. The parameter stays so a browser still running the old
+-- page can call it, but whatever it asks for, the table seats four; the host
+-- can start early once two people are seated.
+create or replace function public.create_game(p_max_players int default 4)
 returns public.games
 language plpgsql security definer set search_path = public
 as $$
 declare
   me  uuid := auth.uid();
   row public.games;
+  stale_id uuid;
 begin
   if me is null then
     raise exception 'not authenticated';
-  end if;
-  if p_max_players < 2 or p_max_players > 4 then
-    raise exception 'a table seats 2 to 4 players';
   end if;
   if not exists (select 1 from profiles where id = me) then
     raise exception 'finish creating your profile first';
   end if;
 
-  update games set status = 'abandoned'
-   where host_id = me and status = 'waiting';
+  -- One open table per host: opening a new one closes the old.
+  for stale_id in
+    update games set status = 'abandoned'
+     where host_id = me and status = 'waiting'
+    returning id
+  loop
+    perform public.nudge_lobby(stale_id);
+  end loop;
 
   insert into games (host_id, max_players, seed)
-  values (me, p_max_players, floor(random() * 2147483646)::bigint)
+  values (me, 4, floor(random() * 2147483646)::bigint)
   returning * into row;
 
   insert into game_players (game_id, seat, player_id) values (row.id, 0, me);
@@ -229,7 +257,7 @@ begin
 end;
 $$;
 
--- Host may start a partly filled table, as long as two people are seated.
+-- ------------------------------------------------------------- start_game --
 create or replace function public.start_game(p_game uuid, p_state jsonb)
 returns public.games
 language plpgsql security definer set search_path = public
@@ -262,6 +290,7 @@ begin
    where id = p_game
   returning * into row;
 
+  perform public.nudge_lobby(p_game);
   return row;
 end;
 $$;
@@ -484,25 +513,43 @@ begin
 end;
 $$;
 
--- Withdraw a table nobody has joined. Ratings are untouched.
+-- ----------------------------------------------------------- abandon_game --
+--
+-- The host closes a table that has not started, however many people are
+-- sitting at it. They are sent back to the lobby by their own browsers, which
+-- see the status change. Records are untouched.
 create or replace function public.abandon_game(p_game uuid)
 returns void
 language plpgsql security definer set search_path = public
 as $$
 declare
-  taken int;
+  me  uuid := auth.uid();
+  row public.games;
 begin
-  select count(*) into taken from game_players where game_id = p_game;
-  update games
-     set status = 'abandoned'
-   where id = p_game
-     and host_id = auth.uid()
-     and status = 'waiting'
-     and taken <= 1;
+  if me is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select * into row from games where id = p_game for update;
+  if not found then
+    raise exception 'no such game';
+  end if;
+  if row.host_id <> me then
+    raise exception 'only the host can close this table';
+  end if;
+  if row.status = 'abandoned' then
+    return;                              -- already closed; nothing to do
+  end if;
+  if row.status <> 'waiting' then
+    raise exception 'that table has already started';
+  end if;
+
+  update games set status = 'abandoned' where id = p_game;
+  perform public.nudge_lobby(p_game);
 end;
 $$;
 
--- Leave a table you joined but that has not started.
+-- ------------------------------------------------------------ leave_table --
 create or replace function public.leave_table(p_game uuid)
 returns void
 language plpgsql security definer set search_path = public
@@ -516,8 +563,10 @@ begin
   end if;
   if row.host_id = auth.uid() then
     update games set status = 'abandoned' where id = p_game;
+    perform public.nudge_lobby(p_game);
     return;
   end if;
+  -- A deleted seat already reaches every lobby, so no nudge is needed here.
   delete from game_players where game_id = p_game and player_id = auth.uid();
 end;
 $$;

@@ -5,6 +5,7 @@ import {
   canPass,
   canTake,
   canAct,
+  canClear,
   describe,
   roleOf,
   sameCard,
@@ -26,6 +27,7 @@ import {
   startGame,
   joinGame,
   watchGame,
+  getGameVersion,
   isStaleError,
 } from './db.js';
 import { readableError } from './supabase.js';
@@ -43,7 +45,14 @@ import {
   DRAW_STAGGER_MS,
 } from './fx.js';
 import { play as playSound, getVolume, setVolume, setSoundActive } from './sound.js';
-import { $, show, setText, clear, toast, cardEl } from './ui.js';
+import { $, show, setText, clear, toast, cardEl, paintScore } from './ui.js';
+
+/**
+ * How long a finished round stays on the table before it clears itself: the
+ * defence that beat the last card, or the card that filled the table on a
+ * take. Attackers can still throw in while it is showing.
+ */
+const CLEAR_DELAY_MS = 3000;
 
 /** How long the finished table stays on screen before the scores appear. */
 const RESULT_DELAY_MS = 2200;
@@ -51,6 +60,14 @@ const RESULT_DELAY_MS = 2200;
 /** Dealing: gap between cards leaving the stock, and how long each is in the air. */
 const DEAL_GAP_MS = 90;
 const DEAL_FLIGHT_MS = 320;
+
+/**
+ * How often an open, visible table double-checks it has not missed a move.
+ * Realtime normally makes this redundant; it is the safety net for a socket
+ * that has died without saying so, which a sleeping laptop or a phone that
+ * backgrounded the browser can both produce.
+ */
+const CHECK_IN_MS = 15000;
 
 let game = null;       // the games row, seats sorted
 let confirmed = null;  // the last position the server acknowledged
@@ -66,6 +83,17 @@ let resultTimer = null;
 let dealing = false;    // opening hands still flying out
 let dealPlayed = false; // only deal once per visit to a table
 let dealTimers = [];
+
+let watchGen = 0;       // bumps on every (re)subscribe, so stale channel callbacks are ignored
+let live = false;       // the current channel has confirmed SUBSCRIBED
+let resyncing = false;
+let resyncAgain = false;
+let checkingIn = false;
+let checkInTimer = null;
+let closing = false;    // this browser asked to close or leave the table
+let clearTimer = null;
+let clearArmedFor = null; // the confirmed version the clear countdown belongs to
+let promptBarFor = null;  // the version the prompt's countdown bar was started for
 
 /**
  * How far into the position's log sound and animation have already reacted.
@@ -144,6 +172,11 @@ export async function enterGame(gameId) {
   }
 
   mySeat = seatOf(session.user.id);
+  if (game.status === 'abandoned') {
+    toast('That table was closed.');
+    location.hash = '#/';
+    return;
+  }
   if (mySeat === null) {
     if (game.status !== 'waiting') {
       toast('That game has already started.');
@@ -163,19 +196,146 @@ export async function enterGame(gameId) {
     }
   }
 
-  unwatch = watchGame(gameId, async (event) => {
-    if (event.kind === 'seats') {
-      game = (await getGame(gameId)) ?? game;
-    } else {
-      game = mergeRow(game, event.row);
-    }
-    if (mySeat === null) mySeat = seatOf(session.user.id);
-    adopt(game.state);
-    await maybeSettle();
-  });
-
   adopt(game.state);
+  startWatching(gameId);
+
+  document.addEventListener('visibilitychange', onWake);
+  window.addEventListener('focus', onWake);
+  window.addEventListener('online', onWake);
+  checkInTimer = setInterval(() => checkIn(), CHECK_IN_MS);
+
   await maybeSettle();
+}
+
+/* ------------------------------------------------------------------ */
+/* staying in sync                                                     */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Subscribe to the table, replacing any previous subscription.
+ *
+ * Every SUBSCRIBED — the first one, and each automatic rejoin after the
+ * connection dropped — triggers a full re-read. Realtime does not replay what
+ * happened while it was disconnected, and even the first subscribe leaves a
+ * gap between enterGame's getGame() and the channel going live.
+ */
+function startWatching(gameId) {
+  if (unwatch) unwatch();
+  live = false;
+  const gen = ++watchGen;
+
+  unwatch = watchGame(
+    gameId,
+    async (event) => {
+      if (gen !== watchGen || !game) return;
+      if (event.kind === 'seats') {
+        const fresh = await getGame(gameId).catch(() => null);
+        if (gen !== watchGen || !game || !fresh) return;
+        game = isOlder(fresh) ? { ...game, players: fresh.players } : fresh;
+      } else {
+        if (isOlder(event.row)) return; // arrived after something newer
+        game = mergeRow(game, event.row);
+      }
+      if (mySeat === null) mySeat = seatOf(session.user.id);
+      adopt(game.state);
+      await maybeSettle();
+    },
+    (status, err) => {
+      if (gen !== watchGen) return;
+      if (status === 'SUBSCRIBED') {
+        live = true;
+        resync();
+      } else {
+        // CHANNEL_ERROR and TIMED_OUT are retried by the library on its own;
+        // onWake() starts over if it is still down when the player looks again.
+        live = false;
+        if (err) console.warn('Realtime:', status, err);
+      }
+    }
+  );
+}
+
+/** The tab came back into view, the window got focus, or the network returned. */
+function onWake() {
+  if (document.visibilityState !== 'visible' || !game) return;
+  checkIn({ rewatch: true });
+}
+
+/**
+ * Ask the database whether the table has moved on without us, and catch up
+ * if it has. Cheap: one row, two columns.
+ */
+async function checkIn({ rewatch = false } = {}) {
+  if (!game || checkingIn || document.visibilityState !== 'visible') return;
+
+  if (!live && rewatch) {
+    startWatching(game.id); // its SUBSCRIBED will resync
+    return;
+  }
+  if (sending) return; // our own write is about to report back anyway
+
+  checkingIn = true;
+  const id = game.id;
+  try {
+    const head = await getGameVersion(id);
+    if (!head || !game || game.id !== id) return;
+    const ours = confirmed?.version ?? game.version ?? 0;
+    // Seats filling does not move the version, so a waiting table always re-reads.
+    const moved = head.version !== ours || head.status !== game.status;
+    if (moved || game.status === 'waiting') await resync();
+  } catch {
+    /* offline; the next wake or check-in tries again */
+  } finally {
+    checkingIn = false;
+  }
+}
+
+/**
+ * Re-read the whole table and adopt it.
+ *
+ * If more than one move was missed, the position is swapped in without sound
+ * or animation: the effects are written to explain a single step, and
+ * replaying a dozen of them at once after someone returns to the tab would
+ * be noise rather than information.
+ */
+async function resync() {
+  if (!game) return;
+  if (resyncing) {
+    resyncAgain = true;
+    return;
+  }
+  resyncing = true;
+  const gen = watchGen;
+  const id = game.id;
+
+  try {
+    do {
+      resyncAgain = false;
+      const fresh = await getGame(id).catch(() => null);
+      if (gen !== watchGen || !game || game.id !== id || !fresh) return;
+
+      if (isOlder(fresh)) {
+        game = { ...game, players: fresh.players };
+        continue;
+      }
+
+      const before = confirmed?.version;
+      game = fresh;
+      if (mySeat === null) mySeat = seatOf(session.user.id);
+      const jumped = before !== undefined && fresh.state && fresh.state.version > before + 1;
+      adopt(fresh.state, { quiet: jumped });
+      await maybeSettle();
+    } while (resyncAgain);
+  } finally {
+    resyncing = false;
+  }
+
+  drain(); // anything queued while we were out of touch
+}
+
+/** True when a row from the server is behind the one we already hold. */
+function isOlder(row) {
+  return Boolean(game && row && typeof row.version === 'number' && row.version < (game.version ?? 0));
 }
 
 export function leaveGame() {
@@ -187,8 +347,21 @@ export function leaveGame() {
 function reset() {
   if (unwatch) unwatch();
   unwatch = null;
+  watchGen++;
+  closing = false;
+  live = false;
+  resyncing = false;
+  resyncAgain = false;
+  checkingIn = false;
+  clearInterval(checkInTimer);
+  checkInTimer = null;
+  document.removeEventListener('visibilitychange', onWake);
+  window.removeEventListener('focus', onWake);
+  window.removeEventListener('online', onWake);
   clearTimeout(resultTimer);
   resultTimer = null;
+  cancelClear();
+  promptBarFor = null;
   dealTimers.forEach(clearTimeout);
   dealTimers = [];
   dealing = false;
@@ -254,12 +427,19 @@ function rebuild() {
   return next;
 }
 
-/** Take a new server position, replay anything still in flight, and draw it. */
-function adopt(serverState) {
+/**
+ * Take a new server position, replay anything still in flight, and draw it.
+ *
+ * Positions older than the one already confirmed are ignored. Our own RPC
+ * response, its realtime echo, and a resync read can arrive in any order,
+ * and none of them should be able to wind the table backwards.
+ */
+function adopt(serverState, { quiet = false } = {}) {
+  if (confirmed && serverState && serverState.version < confirmed.version) return;
   const previous = state;
   confirmed = serverState;
   const next = rebuild();
-  present(previous, next);
+  present(previous, next, { quiet });
 }
 
 /** Apply locally without waiting for anything. */
@@ -276,11 +456,17 @@ function advanceLocally(move) {
  * except for a hand a card is actively flying toward, which is held back by
  * `revealed` until the animation lands (see runEffects and release()).
  */
-function present(previous, next) {
+function present(previous, next, { quiet = false } = {}) {
   // A position at version 0 is a table that has just been dealt.
-  const opening = Boolean(next) && next.version === 0 && !next.finished && !dealPlayed;
+  const opening = !quiet && Boolean(next) && next.version === 0 && !next.finished && !dealPlayed;
 
-  if (opening) {
+  if (quiet) {
+    // Catching up after a gap: mark everything as already announced, and let
+    // no card stay hidden waiting on a flight that is never going to play.
+    dealPlayed = true;
+    hidden = [];
+    if (next?.log) announcedThrough = next.log.length;
+  } else if (opening) {
     dealPlayed = true;
     dealing = true;
     announcedThrough = next.log.length; // the deal itself needs no reaction
@@ -502,6 +688,62 @@ function play(move) {
  * first the database refuses it. We then re-read, replay whatever is still
  * legal, and carry on from there.
  */
+/** Queued moves the player actually made, as opposed to the automatic clear. */
+const playerMoves = () => pending.filter((m) => m.type !== 'clear').length;
+
+/* ------------------------------------------------------------------ */
+/* clearing a finished round                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Start (or keep) the countdown to clearing the table.
+ *
+ * Every browser at the table runs this, and every one whose seat is still in
+ * the game submits the clear when its timer runs out. Whichever lands first
+ * wins; the rest fail the version check and quietly drop theirs. Throwing in
+ * a card, or anyone else's clear arriving, changes the version and cancels
+ * the countdown.
+ */
+function scheduleClear() {
+  const s = confirmed;
+  if (!s || !canClear(s)) {
+    cancelClear();
+    return;
+  }
+  if (clearArmedFor === s.version) return;
+
+  cancelClear();
+  clearArmedFor = s.version;
+  if (mySeat !== null && canClear(s, mySeat)) {
+    clearTimer = setTimeout(fireClear, CLEAR_DELAY_MS);
+  }
+}
+
+function cancelClear() {
+  clearTimeout(clearTimer);
+  clearTimer = null;
+  clearArmedFor = null;
+}
+
+function fireClear() {
+  clearTimer = null;
+  if (!confirmed || confirmed.version !== clearArmedFor || !canClear(confirmed, mySeat)) return;
+
+  // One of our own moves is still on its way. It will change the version if
+  // it lands; check back shortly in case it gets dropped instead.
+  if (pending.length > 0) {
+    clearTimer = setTimeout(fireClear, 400);
+    return;
+  }
+
+  try {
+    advanceLocally({ type: 'clear' });
+  } catch {
+    return;
+  }
+  drain();
+}
+
 async function drain() {
   if (sending || pending.length === 0 || !game) return;
   sending = true;
@@ -522,8 +764,12 @@ async function drain() {
       try {
         const row = await submitMove(game.id, next, confirmed.version);
         game = mergeRow(game, row);
-        pending.shift();
-        confirmed = row.state;
+        // By identity, not shift(): if the realtime echo of this very move
+        // landed first, rebuild() has already dropped it from the queue, and
+        // shift() would throw away the *next* move without ever sending it.
+        const sent = pending.indexOf(move);
+        if (sent !== -1) pending.splice(sent, 1);
+        if (!confirmed || row.state.version >= confirmed.version) confirmed = row.state;
         state = rebuild();
         render();
       } catch (error) {
@@ -537,10 +783,10 @@ async function drain() {
         }
         const fresh = await getGame(game.id).catch(() => null);
         if (!fresh) return;
-        const before = pending.length;
+        const before = playerMoves();
         game = fresh;
         adopt(fresh.state);
-        if (pending.length < before) {
+        if (playerMoves() < before) {
           toast('Someone else moved first — one of your cards did not land.');
         }
       }
@@ -604,13 +850,42 @@ async function onLeave() {
   location.hash = '#/';
 }
 
+/**
+ * The host closes the table for everyone; anyone else just gets up.
+ *
+ * Guests find out through the status change arriving over realtime (or the
+ * next check-in), and render() sends them back to the lobby.
+ */
 async function onLeaveWaiting() {
-  try {
-    if (game.host_id === session.user.id) await abandonGame(game.id);
-    else await leaveTable(game.id);
-  } catch {
-    /* the table simply stays as it was */
+  if (!game || closing) return;
+  const hosting = game.host_id === session.user.id;
+  const guests = (game.players?.length ?? 1) - 1;
+
+  if (hosting && guests > 0) {
+    const who = guests === 1 ? 'The player' : `The ${guests} players`;
+    if (!confirm(`Close this table? ${who} sitting here will be sent back to the lobby.`)) return;
   }
+
+  closing = true;
+  render();
+  try {
+    if (hosting) await abandonGame(game.id);
+    else await leaveTable(game.id);
+  } catch (error) {
+    closing = false;
+    render();
+    toast(readableError(error)); // most likely the game started a moment ago
+    return;
+  }
+  toast(hosting ? 'Table closed.' : 'You left the table.');
+  location.hash = '#/';
+}
+
+/** Someone else closed the table we are sitting at. Back to the lobby. */
+function tableClosed() {
+  if (closing) return; // we closed it ourselves; onLeaveWaiting is handling it
+  closing = true;
+  toast(game.host_id === session.user.id ? 'This table was closed.' : 'The host closed this table.');
   location.hash = '#/';
 }
 
@@ -643,6 +918,10 @@ async function onStartNow(event) {
 
 function render() {
   if (!game) return;
+  if (game.status === 'abandoned') {
+    tableClosed();
+    return;
+  }
 
   const waiting = game.status === 'waiting' || !state;
   show($('#waiting'), waiting);
@@ -652,6 +931,7 @@ function render() {
     return;
   }
 
+  scheduleClear();
   renderOpponents();
   renderStock();
   renderSlots();
@@ -662,10 +942,17 @@ function render() {
 
 function renderWaiting() {
   const seated = game.players.length;
+  const hosting = game.host_id === session.user.id;
   setText(
     $('#waiting-count'),
-    `${seated} of ${game.max_players} seated. The cards deal themselves when the last seat fills.`
+    hosting
+      ? `${seated} of ${game.max_players} seated. Start whenever two or more are here, or the cards deal themselves when every seat fills.`
+      : `${seated} of ${game.max_players} seated. The host can start once two are here, or the cards deal themselves when every seat fills.`
   );
+
+  const leave = $('#waiting-leave');
+  setText(leave, closing ? (hosting ? 'Closing…' : 'Leaving…') : hosting ? 'Close the table' : 'Leave the table');
+  leave.disabled = closing;
 
   const list = $('#seat-list');
   clear(list);
@@ -679,7 +966,7 @@ function renderWaiting() {
       name.textContent = profile.username + (game.host_id === profile.id ? ' (host)' : '');
       const rating = document.createElement('span');
       rating.className = 'seat__rating';
-      rating.textContent = formatScore(scoreOf(profile));
+      paintScore(rating, scoreOf(profile));
       li.append(name, rating);
     } else {
       li.textContent = 'Empty';
@@ -718,7 +1005,7 @@ function renderOpponents() {
 
     const rating = document.createElement('span');
     rating.className = 'player__rating';
-    rating.textContent = formatScore(scoreOf(profile));
+    paintScore(rating, scoreOf(profile));
 
     const role = document.createElement('span');
     role.className = 'player__role';
@@ -860,6 +1147,18 @@ function renderPrompt() {
   setText(el, dealing ? 'Dealing…' : describe(state, mySeat));
   el.classList.remove(...PROMPT_TONES);
   el.classList.add(promptTone());
+
+  // A bar under the prompt runs down while a finished round is on show, so
+  // attackers can see how long they have left to throw in.
+  const counting = clearArmedFor !== null && Boolean(state) && canClear(state);
+  if (counting && promptBarFor !== clearArmedFor) {
+    el.classList.remove('is-clearing');
+    void el.offsetWidth; // restart the animation for a new countdown
+    el.style.setProperty('--clear-ms', `${CLEAR_DELAY_MS}ms`);
+    promptBarFor = clearArmedFor;
+  }
+  if (!counting) promptBarFor = null;
+  el.classList.toggle('is-clearing', counting);
 }
 
 /** Which of the prompt's looks fits what the table currently wants. */
@@ -954,7 +1253,7 @@ async function showResult() {
     const fresh = await getProfile(session.user.id);
     if (fresh) {
       session.profile = fresh;
-      setText($('#whoami-elo'), formatScore(scoreOf(fresh)));
+      paintScore($('#whoami-elo'), scoreOf(fresh));
     }
   } catch {
     /* the header keeps its old number */

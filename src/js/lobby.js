@@ -1,55 +1,87 @@
 import {
   createGame,
   joinGame,
+  abandonGame,
+  leaveTable,
   listOpenGames,
   listMyGames,
   watchLobby,
 } from './db.js';
 import { readableError } from './supabase.js';
-import { session } from './auth.js';
+import { session, scoreOf } from './auth.js';
 import { newGame } from './durak.js';
 import { formatScore } from './score.js';
-import { scoreOf } from './auth.js';
-import { CONFIG } from './config.js';
-import { $, $$, show, setText, clear, toast, relativeTime, deltaClass } from './ui.js';
+import { $, show, setText, clear, toast, relativeTime, deltaClass } from './ui.js';
+
+/**
+ * How often a visible lobby re-reads the table list on its own. Realtime
+ * covers nearly everything; this catches whatever a dropped connection missed.
+ */
+const LOBBY_POLL_MS = 20000;
 
 let unwatch = null;
 let refreshTimer = null;
+let pollTimer = null;
+let refreshSeq = 0;   // only the newest refresh gets to draw
+let myTable = null;   // the waiting table I am sitting at, if any
 
 export function initLobby() {
   $('#create-game').addEventListener('click', onCreate);
   $('#refresh-games').addEventListener('click', refresh);
+}
 
-  const preferred = String(CONFIG.defaultPlayers ?? 4);
-  const radio = $(`.seats-picker input[value="${preferred}"]`);
-  if (radio) radio.checked = true;
+function refreshSoon() {
+  clearTimeout(refreshTimer);
+  refreshTimer = setTimeout(refresh, 350); // coalesce bursts of row changes
+}
+
+/** Back in view or back online: the list may have changed while we were away. */
+function onWake() {
+  if (document.visibilityState === 'visible') refreshSoon();
 }
 
 export function enterLobby() {
   refresh();
-  unwatch = watchLobby(() => {
-    clearTimeout(refreshTimer);
-    refreshTimer = setTimeout(refresh, 350); // coalesce bursts of row changes
+  // Each SUBSCRIBED, including rejoins after a dropped connection, re-reads the
+  // list, since realtime does not replay what it missed while disconnected.
+  unwatch = watchLobby(refreshSoon, (status) => {
+    if (status === 'SUBSCRIBED') refreshSoon();
   });
+  document.addEventListener('visibilitychange', onWake);
+  window.addEventListener('online', onWake);
+  pollTimer = setInterval(() => {
+    if (document.visibilityState === 'visible') refresh();
+  }, LOBBY_POLL_MS);
 }
 
 export function leaveLobby() {
   if (unwatch) unwatch();
   unwatch = null;
   clearTimeout(refreshTimer);
-}
-
-function chosenSeats() {
-  const picked = $$('.seats-picker input').find((r) => r.checked);
-  return picked ? Number(picked.value) : 4;
+  clearInterval(pollTimer);
+  pollTimer = null;
+  refreshSeq++; // drop any refresh still in flight
+  document.removeEventListener('visibilitychange', onWake);
+  window.removeEventListener('online', onWake);
 }
 
 async function onCreate(event) {
+  // Opening a new table closes the one you host. Only worth asking about when
+  // somebody else is already sitting at it.
+  const hosting = myTable && myTable.host_id === session.user.id;
+  const guests = hosting ? (myTable.players?.length ?? 1) - 1 : 0;
+  if (guests > 0) {
+    const who = guests === 1 ? 'the player' : `the ${guests} players`;
+    if (!confirm(`Opening a new table closes the one you have open and sends ${who} sitting there back to the lobby. Continue?`)) {
+      return;
+    }
+  }
+
   const btn = event.currentTarget;
   btn.disabled = true;
   setText(btn, 'Opening…');
   try {
-    const game = await createGame(chosenSeats());
+    const game = await createGame();
     location.hash = `#/game/${game.id}`;
   } catch (error) {
     toast(readableError(error));
@@ -78,14 +110,37 @@ async function onJoin(game, btn) {
   }
 }
 
+/** Close the table I host, or get up from one I joined, without going back to it. */
+async function onCloseMine(game, btn) {
+  const hosting = game.host_id === session.user.id;
+  const guests = (game.players?.length ?? 1) - 1;
+  if (hosting && guests > 0) {
+    const who = guests === 1 ? 'The player' : `The ${guests} players`;
+    if (!confirm(`Close this table? ${who} sitting there will be sent back to the lobby.`)) return;
+  }
+
+  btn.disabled = true;
+  setText(btn, hosting ? 'Closing…' : 'Leaving…');
+  try {
+    if (hosting) await abandonGame(game.id);
+    else await leaveTable(game.id);
+    toast(hosting ? 'Table closed.' : 'You left the table.');
+  } catch (error) {
+    toast(readableError(error));
+  }
+  refresh();
+}
+
 export async function refresh() {
   if (!session.user) return;
+  const seq = ++refreshSeq;
   try {
     const [open, mine] = await Promise.all([listOpenGames(), listMyGames(session.user.id)]);
+    if (seq !== refreshSeq) return; // a newer refresh started while this one was out
     renderOpen(open);
     renderHistory(mine);
   } catch (error) {
-    toast(readableError(error));
+    if (seq === refreshSeq) toast(readableError(error));
   }
 }
 
@@ -97,28 +152,20 @@ function renderOpen(games) {
   const list = $('#open-games');
   clear(list);
 
-  const mine = games.find((g) => seatedIds(g).includes(session.user.id));
+  const mine = games.find((g) => seatedIds(g).includes(session.user.id)) ?? null;
   const others = games.filter((g) => !seatedIds(g).includes(session.user.id));
+  myTable = mine;
 
-  const notice = $('#my-open-game');
-  if (mine) {
-    clear(notice);
-    const link = document.createElement('a');
-    link.href = `#/game/${mine.id}`;
-    link.dataset.link = '';
-    link.textContent = 'Go back to it';
-    notice.append(
-      `You are already at a table (${mine.players.length} of ${mine.max_players} seated). `,
-      link,
-      '.'
-    );
-  }
-  show(notice, Boolean(mine));
+  renderMyTable(mine);
   show($('#no-games'), others.length === 0);
 
   for (const game of others) {
     const seated = game.players?.length ?? 0;
     const host = game.players?.find((p) => p.player_id === game.host_id)?.profile;
+    const names = (game.players ?? [])
+      .filter((p) => p.player_id !== game.host_id)
+      .map((p) => p.profile?.username)
+      .filter(Boolean);
 
     const li = document.createElement('li');
 
@@ -128,9 +175,12 @@ function renderOpen(games) {
 
     const meta = document.createElement('span');
     meta.className = 'row__meta';
-    meta.textContent =
-      `${formatScore(scoreOf(host))} · ${seated} of ${game.max_players} seated · ` +
-      `opened ${relativeTime(game.created_at)}`;
+    meta.textContent = [
+      formatScore(scoreOf(host)),
+      `${seated} of ${game.max_players} seated`,
+      names.length ? `with ${names.join(', ')}` : null,
+      `opened ${relativeTime(game.created_at)}`,
+    ].filter(Boolean).join(' · ');
 
     const btn = document.createElement('button');
     btn.type = 'button';
@@ -141,6 +191,36 @@ function renderOpen(games) {
     li.append(name, meta, btn);
     list.append(li);
   }
+}
+
+/** The table I am already sitting at: go back to it, or close / leave it from here. */
+function renderMyTable(game) {
+  const box = $('#my-open-game');
+  clear(box);
+  show(box, Boolean(game));
+  if (!game) return;
+
+  const hosting = game.host_id === session.user.id;
+  const seated = game.players?.length ?? 0;
+
+  const text = document.createElement('span');
+  text.textContent = hosting
+    ? `Your table is open (${seated} of ${game.max_players} seated).`
+    : `You are sitting at a table (${seated} of ${game.max_players} seated).`;
+
+  const link = document.createElement('a');
+  link.href = `#/game/${game.id}`;
+  link.dataset.link = '';
+  link.className = 'btn';
+  link.textContent = 'Go back to it';
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'btn btn--quiet';
+  btn.textContent = hosting ? 'Close the table' : 'Leave the table';
+  btn.addEventListener('click', () => onCloseMine(game, btn));
+
+  box.append(text, link, btn);
 }
 
 function renderHistory(games) {

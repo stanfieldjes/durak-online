@@ -73,9 +73,19 @@ moment, with no order between them, up to six cards and never more than the
 defender can answer. The defender can be beating one card while somebody throws
 in another.
 
-Anyone with no legal throw-in is passed automatically, so a round never waits on
-a player who has nothing to add. A round closes when every attacker has passed
-and either the defender has beaten everything or has taken.
+**Ending a round.** When the defender beats everything, nobody has to confirm
+anything: the table stays up for three seconds so everyone sees the defence
+(attackers can still throw in during that time, with a countdown under the
+prompt), then clears itself. When the defender takes, attackers get a Done
+button and the defender picks the cards up once every attacker has pressed it.
+If no more cards can go down (six on the table, or nothing more the defender
+could receive), nobody presses Done; the cards go to the defender after the
+same pause.
+
+The engine cannot keep time, so the self-clearing is a `clear` move that every
+browser at the table submits when its countdown ends. The version check below
+makes sure exactly one of them lands. `CLEAR_DELAY_MS` in `game.js` sets the
+pause.
 
 Not implemented: transferring the attack (`perevodnoy`), the five-card cap on
 the opening bout, and a turn clock. `config.json` has a `turnSeconds` slot

@@ -17,6 +17,7 @@
   --go-ink: #0d2c1e;
   --red-soft: #f0958f;
   --green-bright: #46c184;
+  --score-down: #ff7a70;   /* reads as red, and stays legible on the felt */
 
   --card: #f4f1ea;
   --card-edge: #c6bfae;
@@ -122,7 +123,12 @@ body {
 }
 
 .whoami__name { font-weight: 500; }
-.whoami__elo { font-variant-numeric: tabular-nums; color: var(--green-bright); font-weight: 500; }
+.whoami__elo { font-variant-numeric: tabular-nums; font-weight: 500; }
+
+/* A score's colour follows its sign. See paintScore() in ui.js. */
+.score--up { color: var(--green-bright); }
+.score--down { color: var(--score-down); }
+.score--even { color: var(--chalk); }
 
 /* ---------- layout ---------- */
 
@@ -316,45 +322,19 @@ body {
 .delta--down { color: var(--red-soft); }
 .delta--flat { color: var(--chalk-rail); }
 
-.seats-picker {
-  border: 0;
-  padding: 0;
-  margin: 0 0 1.1rem;
+.lobby__rule { margin: 0 0 1.1rem; }
+
+.my-table {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 0.8rem;
+  margin-top: 1rem;
+  max-width: none;
 }
 
-.seats-picker legend {
-  float: left;
-  color: var(--chalk-rail);
-  font-size: var(--step--1);
-  padding: 0 0.6rem 0 0;
-  line-height: 2.2;
-}
-
-.seats-picker label { position: relative; }
-.seats-picker input { position: absolute; opacity: 0; inset: 0; cursor: pointer; }
-
-.seats-picker span {
-  display: grid;
-  place-items: center;
-  width: 2.4rem;
-  height: 2.4rem;
-  border: 1px solid var(--rail-line);
-  border-radius: var(--radius);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
-.seats-picker input:checked + span {
-  background: var(--red);
-  border-color: var(--red);
-  color: #fff;
-  font-weight: 700;
-}
-
-.seats-picker input:focus-visible + span { outline: 2px solid var(--red-bright); outline-offset: 2px; }
+.my-table .btn { font-size: var(--step-0); }
+a.btn { display: inline-block; text-decoration: none; }
 
 /* ---------- waiting room ---------- */
 
@@ -392,7 +372,7 @@ body {
 
 .seat--empty { color: var(--chalk-rail); font-style: italic; }
 .seat__name { font-weight: 500; }
-.seat__rating { margin-left: auto; color: var(--green-bright); font-variant-numeric: tabular-nums; }
+.seat__rating { margin-left: auto; font-variant-numeric: tabular-nums; }
 
 /* ---------- the table ---------- */
 
@@ -553,7 +533,7 @@ body {
 
 .player__head { display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; }
 .player__name { font-weight: 500; }
-.player__rating { color: var(--green-bright); font-variant-numeric: tabular-nums; font-size: var(--step--1); }
+.player__rating { font-variant-numeric: tabular-nums; font-size: var(--step--1); }
 .player__role { margin-left: auto; font-size: var(--step--1); color: var(--chalk-dim); }
 .player--defending .player__role { color: var(--chalk); }
 .player--attacking .player__role { color: var(--red-soft); }
@@ -689,6 +669,26 @@ body {
 }
 
 .prompt.is-over { color: #fff; font-weight: 500; }
+
+/* Countdown while a finished round is on show. */
+.prompt { position: relative; overflow: hidden; }
+.prompt.is-clearing::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 2px;
+  background: currentColor;
+  opacity: 0.6;
+  transform-origin: left;
+  animation: clear-countdown var(--clear-ms, 3000ms) linear forwards;
+}
+
+@keyframes clear-countdown {
+  from { transform: scaleX(1); }
+  to { transform: scaleX(0); }
+}
 
 .fan { display: flex; justify-content: center; min-height: var(--card-h); }
 .fan .card { margin-inline: calc(var(--card-w) * -0.18); }
@@ -1009,7 +1009,6 @@ button.card.is-selected {
   .masthead { flex-wrap: wrap; }
   .opponents { grid-template-columns: 1fr 1fr; }
   .player__role { margin-left: 0; width: 100%; }
-  .seats-picker legend { line-height: 1.6; }
 }
 
 @media (prefers-reduced-motion: reduce) {

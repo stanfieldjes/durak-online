@@ -50,8 +50,9 @@ function withSortedSeats(game) {
   return { ...game, players: [...game.players].sort((a, b) => a.seat - b.seat) };
 }
 
-export async function createGame(maxPlayers) {
-  const { data, error } = await supabase.rpc('create_game', { p_max_players: maxPlayers });
+/** Open a table. Every table seats four; the host can start once two are seated. */
+export async function createGame() {
+  const { data, error } = await supabase.rpc('create_game', { p_max_players: 4 });
   if (error) throw error;
   return data;
 }
@@ -162,15 +163,44 @@ export async function leaveTable(gameId) {
   if (error) throw error;
 }
 
+/**
+ * Just the version and status of a table: a cheap way to ask "have I missed
+ * anything?" without pulling the whole position.
+ */
+export async function getGameVersion(gameId) {
+  const { data, error } = await supabase
+    .from('games')
+    .select('version, status')
+    .eq('id', gameId)
+    .maybeSingle();
+  if (error) throw error;
+  return data;
+}
+
 /* ---------------- realtime ---------------- */
+
+/**
+ * A fresh channel name per subscription.
+ *
+ * Leaving a channel and joining another with the same name straight away can
+ * let the server's reply to the leave close the new join too, which leaves a
+ * channel that looks subscribed and never delivers anything. The name has no
+ * meaning for postgres_changes, so a unique one sidesteps that entirely.
+ */
+const channelName = (base) =>
+  `${base}:${globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`}`;
 
 /**
  * Watch one table. Fires on moves and on players sitting down, so a waiting
  * host sees the seats fill. Returns an unsubscribe function.
+ *
+ * Realtime does not replay changes that happened while the socket was down,
+ * so `onStatus` hears every SUBSCRIBED (including each automatic rejoin after
+ * a dropped connection) and the caller re-reads the table then.
  */
-export function watchGame(gameId, onChange) {
+export function watchGame(gameId, onChange, onStatus) {
   const channel = supabase
-    .channel(`game:${gameId}`)
+    .channel(channelName(`game:${gameId}`))
     .on(
       'postgres_changes',
       { event: 'UPDATE', schema: 'public', table: 'games', filter: `id=eq.${gameId}` },
@@ -181,16 +211,16 @@ export function watchGame(gameId, onChange) {
       { event: '*', schema: 'public', table: 'game_players', filter: `game_id=eq.${gameId}` },
       () => onChange({ kind: 'seats' })
     )
-    .subscribe();
+    .subscribe((status, err) => onStatus?.(status, err));
   return () => supabase.removeChannel(channel);
 }
 
 /** Watch the lobby. Returns an unsubscribe function. */
-export function watchLobby(onChange) {
+export function watchLobby(onChange, onStatus) {
   const channel = supabase
-    .channel('lobby')
+    .channel(channelName('lobby'))
     .on('postgres_changes', { event: '*', schema: 'public', table: 'games' }, onChange)
     .on('postgres_changes', { event: '*', schema: 'public', table: 'game_players' }, onChange)
-    .subscribe();
+    .subscribe((status, err) => onStatus?.(status, err));
   return () => supabase.removeChannel(channel);
 }

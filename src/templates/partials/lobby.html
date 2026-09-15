@@ -3,18 +3,13 @@
     <h1 class="display">Open a table</h1>
     <p class="lede">Requires friends.</p>
 
-    <fieldset class="seats-picker">
-      <legend>Seats</legend>
-      <label><input type="radio" name="seats" value="2"><span>2</span></label>
-      <label><input type="radio" name="seats" value="3"><span>3</span></label>
-      <label><input type="radio" name="seats" value="4" checked><span>4</span></label>
-    </fieldset>
+    <p class="hint lobby__rule">Minimum: 2, Maximum: 4</p>
 
     <div class="lobby__buttons">
       <button type="button" class="btn btn--primary" id="create-game">Open a table</button>
       <button type="button" class="btn" id="refresh-games">Refresh</button>
     </div>
-    <p class="hint" id="my-open-game" hidden></p>
+    <div class="hint my-table" id="my-open-game" hidden></div>
   </div>
 
   <div class="lobby__tables">
