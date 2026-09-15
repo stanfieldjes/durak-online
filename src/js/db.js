@@ -34,7 +34,7 @@ export async function getLeaderboard(limit = 50) {
 /* ---------------- games ---------------- */
 
 const GAME_COLUMNS = `
-  id, status, host_id, max_players, seed, state, version, durak_id, score_delta, created_at, clear_delay_ms,
+  id, status, host_id, max_players, seed, state, version, durak_id, score_delta, created_at, updated_at, clear_delay_ms,
   players:game_players ( seat, player_id, profile:profiles ( id, username, wins, losses, draws, expected_duraks ) )
 `;
 
@@ -95,17 +95,25 @@ export async function listOpenGames() {
   return (data ?? []).map(withSortedSeats);
 }
 
-export async function listMyGames(userId, limit = 10) {
-  // Two steps, because filtering a parent by a child column needs an inner join
-  // that would also hide the other seats from the result.
-  const { data: seats, error: seatError } = await supabase
+/**
+ * Ids of the tables this player has sat at, most recent first.
+ *
+ * Two steps, because filtering a parent by a child column needs an inner join
+ * that would also hide the other seats from the result.
+ */
+async function mySeatGameIds(userId) {
+  const { data, error } = await supabase
     .from('game_players')
     .select('game_id')
     .eq('player_id', userId)
+    .order('joined_at', { ascending: false })
     .limit(200);
-  if (seatError) throw seatError;
+  if (error) throw error;
+  return (data ?? []).map((s) => s.game_id);
+}
 
-  const ids = (seats ?? []).map((s) => s.game_id);
+export async function listMyGames(userId, limit = 10) {
+  const ids = await mySeatGameIds(userId);
   if (ids.length === 0) return [];
 
   const { data, error } = await supabase
@@ -114,6 +122,22 @@ export async function listMyGames(userId, limit = 10) {
     .in('id', ids)
     .eq('status', 'finished')
     .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+  return (data ?? []).map(withSortedSeats);
+}
+
+/** Games this player is seated at that are still being played, latest move first. */
+export async function listActiveGames(userId, limit = 10) {
+  const ids = await mySeatGameIds(userId);
+  if (ids.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('games')
+    .select(GAME_COLUMNS)
+    .in('id', ids)
+    .eq('status', 'active')
+    .order('updated_at', { ascending: false })
     .limit(limit);
   if (error) throw error;
   return (data ?? []).map(withSortedSeats);

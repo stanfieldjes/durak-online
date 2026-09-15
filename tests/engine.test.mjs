@@ -20,6 +20,7 @@ import {
   makeRng,
   MAX_SLOTS,
   isHopelessForDefender,
+  describe,
 } from '../src/js/durak.js';
 
 const GAMES_PER_SIZE = 1200;
@@ -509,6 +510,34 @@ console.log('Checking when Done is offered...');
   const quiet = applyMove(e, 1, { type: 'defend', card: { r: 'A', s: e.trump }, slot: 0 });
   check('empty-handed attackers alone never skip the pause', quiet.table.length === 1 && canClear(quiet));
   check('but they can still press Done to skip it', canPass(quiet, 0) && applyMove(quiet, 0, { type: 'pass' }).table.length === 0);
+}
+
+console.log('Checking prompts never claim a beaten table when nothing was played...');
+{
+  for (const players of [2, 3, 4]) {
+    const s = newGame(7, players);
+    const text = describe(s, s.defender);
+    check(`${players}p: defender before the attack is told to wait ("${text}")`,
+      !/beaten/i.test(text) && /waiting for the attack/i.test(text));
+  }
+  const rng = makeRng(77);
+  for (let g = 0; g < 200; g++) {
+    let state = newGame(g + 3000, 2 + (g % 3));
+    let guard = 0;
+    while (!state.finished && guard++ < 3000) {
+      for (const seat of activeSeats(state)) {
+        const text = describe(state, seat);
+        if (/beaten/i.test(text) && !(state.table.length > 0 && state.table.every((t) => t.def))) {
+          fail(`game ${g}: seat ${seat} told "${text}" with ${state.table.length} cards down`);
+        }
+      }
+      const actors = seatsToAct(state);
+      if (!actors.length) break;
+      const seat = actors[Math.floor(rng() * actors.length)];
+      const moves = availableMoves(state, seat);
+      state = applyMove(state, seat, moves[Math.floor(rng() * moves.length)]);
+    }
+  }
 }
 
 /* ---- forced endings and the draw that survives them ------------------- */

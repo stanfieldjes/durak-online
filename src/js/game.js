@@ -15,6 +15,7 @@ import {
   HAND_SIZE,
   SUITS,
   SUIT_GLYPH,
+  SUIT_NAME,
   IllegalMove,
 } from './durak.js';
 import {
@@ -1063,11 +1064,14 @@ function renderStock() {
     trumpBox.append(cardEl(state.trumpCard, { trump: state.trump }));
   }
 
+  // Once the stock is gone, so is the turned-up trump card. The empty pile
+  // shows the trump suit in its place, so it is never lost in the endgame.
   const pile = $('#deck-pile');
-  pile.dataset.empty = String(state.deck.length === 0);
-  setText($('#deck-count'), String(state.deck.length));
-  setText($('#trump-label'), `Trump ${SUIT_GLYPH[state.trump]}`);
-  $('#trump-label').classList.toggle('is-red', state.trump === 'H' || state.trump === 'D');
+  const empty = state.deck.length === 0;
+  pile.dataset.empty = String(empty);
+  pile.classList.toggle('is-red', empty && (state.trump === 'H' || state.trump === 'D'));
+  pile.title = empty ? `Trump: ${SUIT_NAME[state.trump]}` : '';
+  setText($('#deck-count'), empty ? SUIT_GLYPH[state.trump] : String(state.deck.length));
 
   show($('#discard'), state.discard > 0);
   setText($('#discard-count'), String(state.discard));

@@ -650,6 +650,7 @@ export function describe(state, seat) {
         ? 'You are taking. The cards come to you in a moment.'
         : 'You are taking. Waiting to see what else gets thrown in.';
     }
+    if (state.table.length === 0) return 'You are defending. Waiting for the attack.';
     if (openSlots(state) > 0) return 'Beat what is in front of you, or take the cards.';
     return 'Everything is beaten. The table clears in a moment.';
   }

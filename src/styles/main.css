@@ -314,6 +314,9 @@ body {
 
 .tables li > .btn { margin-left: auto; }
 
+/* A game in progress that is waiting on you. */
+.tables li.is-your-move { box-shadow: inset 3px 0 0 var(--green-bright); }
+
 .row__name { font-weight: 500; }
 .row__meta { color: var(--chalk-rail); font-size: var(--step--1); font-variant-numeric: tabular-nums; }
 
@@ -390,18 +393,10 @@ a.btn { display: inline-block; text-decoration: none; }
 .felt__bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: var(--gap);
   min-height: 2rem;
 }
-
-.felt__trump {
-  font-weight: 500;
-  color: var(--chalk);
-  font-size: var(--step-1);
-}
-
-.felt__trump.is-red { color: #ff8b83; }
 
 .felt__bar-right { display: flex; align-items: center; gap: 0.6rem; }
 
@@ -597,8 +592,12 @@ a.btn { display: inline-block; text-decoration: none; }
 .stock__pile[data-empty="true"] {
   background: rgba(0, 0, 0, 0.25);
   border-style: dashed;
-  color: #6e837a;
+  color: var(--chalk);
+  font-size: var(--step-2);
 }
+
+/* The empty stock shows the trump suit; red suits in red. */
+.stock__pile[data-empty="true"].is-red { color: #ff8b83; }
 
 .slots {
   display: flex;

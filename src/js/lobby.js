@@ -5,11 +5,12 @@ import {
   leaveTable,
   listOpenGames,
   listMyGames,
+  listActiveGames,
   watchLobby,
 } from './db.js';
 import { readableError } from './supabase.js';
 import { session, scoreOf } from './auth.js';
-import { newGame } from './durak.js';
+import { newGame, openSlots } from './durak.js';
 import { formatScore } from './score.js';
 import { $, show, setText, clear, toast, relativeTime, deltaClass } from './ui.js';
 
@@ -135,13 +136,71 @@ export async function refresh() {
   if (!session.user) return;
   const seq = ++refreshSeq;
   try {
-    const [open, mine] = await Promise.all([listOpenGames(), listMyGames(session.user.id)]);
+    const [open, active, mine] = await Promise.all([
+      listOpenGames(),
+      listActiveGames(session.user.id),
+      listMyGames(session.user.id),
+    ]);
     if (seq !== refreshSeq) return; // a newer refresh started while this one was out
+    renderActive(active);
     renderOpen(open);
     renderHistory(mine);
   } catch (error) {
     if (seq === refreshSeq) toast(readableError(error));
   }
+}
+
+/**
+ * Games you are in that are still going, so leaving the page (or closing the
+ * tab) never strands you: one click takes you back to the table.
+ */
+function renderActive(games) {
+  const list = $('#active-games');
+  clear(list);
+  show($('#active-section'), games.length > 0);
+
+  for (const game of games) {
+    const me = game.players?.find((p) => p.player_id === session.user.id);
+    const state = game.state;
+    const opponents = (game.players ?? [])
+      .filter((p) => p.player_id !== session.user.id)
+      .map((p) => p.profile?.username ?? 'unknown');
+
+    const status = statusFor(state, me?.seat);
+
+    const li = document.createElement('li');
+    if (status.yourMove) li.classList.add('is-your-move');
+
+    const name = document.createElement('span');
+    name.className = 'row__name';
+    name.textContent = `vs ${opponents.join(', ') || 'nobody'}`;
+
+    const meta = document.createElement('span');
+    meta.className = 'row__meta';
+    meta.textContent = [status.text, `last move ${relativeTime(game.updated_at ?? game.created_at)}`].join(' · ');
+
+    const link = document.createElement('a');
+    link.href = `#/game/${game.id}`;
+    link.dataset.link = '';
+    link.className = status.yourMove ? 'btn btn--primary' : 'btn';
+    link.textContent = 'Rejoin';
+
+    li.append(name, meta, link);
+    list.append(li);
+  }
+}
+
+/** A short line on where you stand at a table, and whether it is waiting on you. */
+function statusFor(state, seat) {
+  if (!state || seat === undefined) return { text: 'In progress', yourMove: false };
+  if (state.out?.[seat]) return { text: 'You are out; the others are still playing', yourMove: false };
+
+  if (seat === state.defender) {
+    if (!state.taking && openSlots(state) > 0) return { text: 'Your move: defend', yourMove: true };
+    return { text: 'You are defending', yourMove: false };
+  }
+  if (seat === state.attacker && state.table.length === 0) return { text: 'Your move: attack', yourMove: true };
+  return { text: seat === state.attacker ? 'You are attacking' : 'You are throwing in', yourMove: false };
 }
 
 function seatedIds(game) {

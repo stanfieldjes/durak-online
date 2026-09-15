@@ -1,9 +1,14 @@
 <section class="panel panel--lobby" data-route="lobby" hidden>
+  <div class="lobby__active" id="active-section" hidden>
+    <h2 class="heading">Your games in progress</h2>
+    <ul class="tables" id="active-games"></ul>
+  </div>
+
   <div class="lobby__act">
     <h1 class="display">Open a table</h1>
     <p class="lede">Requires friends.</p>
 
-    <p class="hint lobby__rule">Minimum: 2, Maximum: 4</p>
+    <p class="hint lobby__rule">Up to four players. The host can start once two are seated.</p>
 
     <div class="lobby__buttons">
       <button type="button" class="btn btn--primary" id="create-game">Open a table</button>
