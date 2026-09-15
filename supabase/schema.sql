@@ -57,6 +57,8 @@ create table if not exists public.games (
   score_delta  jsonb,
   -- How long a finished round stays on the table before it may be cleared.
   clear_delay_ms int not null default 10000 check (clear_delay_ms between 0 and 60000),
+  -- The same, when the table cannot take another card: just a look at it.
+  quick_clear_delay_ms int not null default 2500 check (quick_clear_delay_ms between 0 and 60000),
   created_at   timestamptz not null default now(),
   updated_at   timestamptz not null default now()
 );
@@ -335,6 +337,9 @@ declare
   attacker  int;
   table_len int;
   log_len   int;
+  open_len  int;
+  room      int;
+  delay_ms  int;
 begin
   if me is null then
     raise exception 'not authenticated';
@@ -382,14 +387,27 @@ begin
   end if;
 
   -- A clear (the table emptying itself after a round) must wait until the
-  -- position has been on show for the table's clear_delay_ms. updated_at is
-  -- when that position was written, so one slow or modified browser cannot
-  -- cut the pause short for everyone. The engine marks a clear by making
-  -- {"t":"clear"} the first new log entry.
+  -- position has been on show long enough. updated_at is when that position
+  -- was written, so one slow or modified browser cannot cut the pause short
+  -- for everyone. The engine marks a clear by making {"t":"clear"} the first
+  -- new log entry.
+  --
+  -- If the table cannot take another card (six down, or the defender has
+  -- nothing left to answer with) nobody can throw in, so only the short
+  -- quick_clear_delay_ms applies. Mirrors isQuickClear() in durak.js.
   log_len := coalesce(jsonb_array_length(row.state->'log'), 0);
-  if p_state->'log'->log_len->>'t' = 'clear'
-     and now() < row.updated_at + row.clear_delay_ms * interval '1 millisecond' then
-    raise exception 'too early to clear the table';
+  if p_state->'log'->log_len->>'t' = 'clear' then
+    select count(*) into open_len
+      from jsonb_array_elements(row.state->'table') slot
+     where coalesce(jsonb_typeof(slot->'def'), 'null') = 'null';
+    room := least(
+      6 - table_len,
+      coalesce(jsonb_array_length(row.state->'hands'->defender), 0) - open_len
+    );
+    delay_ms := case when room <= 0 then row.quick_clear_delay_ms else row.clear_delay_ms end;
+    if now() < row.updated_at + delay_ms * interval '1 millisecond' then
+      raise exception 'too early to clear the table';
+    end if;
   end if;
 
   update games

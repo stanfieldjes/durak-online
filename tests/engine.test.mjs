@@ -15,6 +15,7 @@ import {
   attackCapacity,
   canPass,
   canClear,
+  isQuickClear,
   cardId,
   beats,
   makeRng,
@@ -376,18 +377,17 @@ console.log('Checking that defending the last card ends the game without a pass 
     check(`${players}p: the defended card stays on the table to be seen`,
       !beaten.finished && beaten.table.length === 1 && beaten.table[0].def);
     check(`${players}p: the defender is never offered Done`, !canPass(beaten, 0));
-    check(`${players}p: the attacker may press Done to skip the pause`, canPass(beaten, 1));
     check(`${players}p: the table is ready to clear`, canClear(beaten, 1));
+    // The defender has no cards left, so nothing more can be thrown in: a
+    // short look at the table, and no Done button to wait on.
+    check(`${players}p: an empty defender makes it a quick clear`, isQuickClear(beaten));
+    check(`${players}p: no Done during a quick clear`, !canPass(beaten, 1));
 
     const after = applyMove(beaten, 1, { type: 'clear' });
     check(`${players}p: clearing ends the game`, after.finished);
     check(`${players}p: the defender wins, the still-loaded opponent is the durak`,
       after.durak === 1);
 
-    // Seats 2+ hold nothing, so they already count as done: seat 1's Done alone skips.
-    const skipped = applyMove(beaten, 1, { type: 'pass' });
-    check(`${players}p: Done skips straight to the same ending`,
-      skipped.finished && skipped.durak === 1 && skipped.discard === after.discard);
   }
 
   // The same shape, but the OTHER player has also emptied their hand: still
@@ -461,13 +461,36 @@ console.log('Checking when Done is offered...');
   const took = applyMove(s, 1, { type: 'take' });
   check('six on the table: the take waits rather than resolving on its own', took.table.length === 6);
   check('six on the table: the table is ready to clear', canClear(took, 0));
-  check('six on the table: Done is offered to skip the pause', canPass(took, 0));
+  check('six on the table: it is a quick clear', isQuickClear(took));
+  check('six on the table: no Done to wait on', !canPass(took, 0));
   const cleared = applyMove(took, 0, { type: 'clear' });
   check('six on the table: clearing hands the cards to the defender',
     cleared.table.length === 0 && cleared.log.some((e) => e.t === 'taken'));
-  const skippedTake = applyMove(took, 0, { type: 'pass' });
-  check('six on the table: Done hands them over at once, same result',
-    skippedTake.table.length === 0 && JSON.stringify(skippedTake.hands) === JSON.stringify(cleared.hands));
+
+  // The reported case: all six attacks beaten, defender still holding cards.
+  let six = newGame(5, 2);
+  six = { ...six, deck: six.deck, trump: 'S', attacker: 0, defender: 1, taking: false, out: [false, false] };
+  six.hands[0] = [{ r: '6', s: 'H' }, { r: '7', s: 'H' }]; // the attacker even holds matching ranks
+  six.hands[1] = [{ r: 'A', s: 'C' }, { r: 'K', s: 'H' }, { r: 'Q', s: 'D' }];
+  six.table = [
+    { atk: { r: '6', s: 'C' }, def: { r: '7', s: 'C' } },
+    { atk: { r: '6', s: 'D' }, def: { r: '7', s: 'D' } },
+    { atk: { r: '8', s: 'C' }, def: { r: '10', s: 'C' } },
+    { atk: { r: '8', s: 'D' }, def: { r: '9', s: 'D' } },
+    { atk: { r: '10', s: 'D' }, def: { r: 'J', s: 'D' } },
+    { atk: { r: 'J', s: 'C' }, def: null },
+  ];
+  six.passed = [false, true];
+  const sixBeaten = applyMove(six, 1, { type: 'defend', card: { r: 'A', s: 'C' }, slot: 5 });
+  check('six beaten: waiting to clear', canClear(sixBeaten) && sixBeaten.table.length === 6);
+  check('six beaten: quick clear, even though the attacker holds matching ranks', isQuickClear(sixBeaten));
+  check('six beaten: nobody can throw in', legalAttacks(sixBeaten, 0).length === 0);
+  check('six beaten: no Done button', !canPass(sixBeaten, 0));
+
+  // Five beaten with room left is still the long pause, with Done.
+  const five = { ...six, table: six.table.slice(0, 5), passed: [false, true] };
+  check('five beaten with room: long pause', canClear(five) && !isQuickClear(five));
+  check('five beaten with room: Done is offered', canPass(five, 0));
 
   // A take with room left still waits for Done.
   let t = newGame(8, 2);

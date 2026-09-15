@@ -19,6 +19,11 @@
  *   - Defender takes and no more cards can go down: nobody has to press Done;
  *     the table waits on the same delayed `clear`, and Done skips it.
  *
+ * When the table cannot take another card (six down, or nothing more the
+ * defender could receive) there is nothing to wait for: the pause is a short
+ * look at the cards rather than a chance to throw in, and there is no Done.
+ * See isQuickClear().
+ *
  * An attacker with an empty hand counts as done without pressing anything,
  * but can still press Done to skip a pause. A pause is only ever skipped by
  * someone actually pressing it, so the last card is never whisked away
@@ -234,7 +239,7 @@ export function legalDefenses(state, seat, slotIndex) {
 export function canPass(state, seat) {
   if (state.finished || state.out[seat]) return false;
   if (seat === state.defender || state.table.length === 0 || state.passed[seat]) return false;
-  if (canClear(state)) return true;
+  if (canClear(state)) return !isQuickClear(state); // a full table has nothing to be done with
   return state.taking && state.hands[seat].length > 0;
 }
 
@@ -252,6 +257,16 @@ export function canClear(state, seat) {
   if (seat !== undefined && (!Number.isInteger(seat) || state.out[seat])) return false;
   if (state.taking) return attackCapacity(state) <= 0;
   return openSlots(state) === 0;
+}
+
+/**
+ * A table waiting to clear that cannot take another card: six down, or the
+ * defender has nothing left to answer with. Nobody can throw in, so the pause
+ * only needs to be long enough to see the cards. submit_move() uses the same
+ * test to pick which delay to hold a clear to.
+ */
+export function isQuickClear(state) {
+  return canClear(state) && attackCapacity(state) <= 0;
 }
 
 export function canTake(state, seat) {
@@ -664,17 +679,14 @@ export function describe(state, seat) {
   const canThrow = legalAttacks(state, seat).length > 0;
   const done = state.passed[seat];
   if (state.taking) {
-    if (full) {
-      return done
-        ? 'They are taking. Waiting for the other attackers, or a moment.'
-        : 'They are taking. No room for more cards — press Done to hand them over now.';
-    }
+    if (full) return 'They are taking. No room for more cards.';
     if (done || state.hands[seat].length === 0) return 'They are taking. Waiting for the other attackers.';
     return canThrow
       ? 'They are taking — throw in anything that matches, then press Done.'
       : 'They are taking. Press Done when you are finished.';
   }
   if (openSlots(state) === 0) {
+    if (full) return 'All beaten. No room for more cards.';
     if (done) return 'All beaten. Waiting for the other attackers, or the table clears in a moment.';
     return canThrow
       ? 'All beaten. Throw in a matching rank, or press Done to clear the table.'

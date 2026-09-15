@@ -34,7 +34,7 @@ export async function getLeaderboard(limit = 50) {
 /* ---------------- games ---------------- */
 
 const GAME_COLUMNS = `
-  id, status, host_id, max_players, seed, state, version, durak_id, score_delta, created_at, updated_at, clear_delay_ms,
+  id, status, host_id, max_players, seed, state, version, durak_id, score_delta, created_at, updated_at, clear_delay_ms, quick_clear_delay_ms,
   players:game_players ( seat, player_id, profile:profiles ( id, username, wins, losses, draws, expected_duraks ) )
 `;
 

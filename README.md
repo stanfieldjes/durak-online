@@ -83,15 +83,21 @@ thrown in resets everyone's Done.
 When the defender takes, attackers get a Done button and the defender picks the
 cards up once every attacker has pressed it (an empty hand counts as done). If
 no more cards can go down (six on the table, or nothing more the defender could
-receive), nobody has to press Done; the cards go to the defender after the same
-pause, and Done skips it.
+receive), nobody has to press Done; the cards go to the defender after a short
+look.
+
+**Full tables.** Whenever the table cannot take another card (six attacks
+down, or the defender has nothing left to answer with) there is nothing to
+wait for, so the pause is only 2.5 seconds, long enough to see the cards, and
+there is no Done button. That applies to a fully beaten table and a full take
+alike.
 
 The engine cannot keep time, so the self-clearing is a `clear` move that every
 browser at the table submits when its countdown ends. The version check below
 makes sure exactly one of them lands, and `submit_move()` refuses a clear that
 arrives before the pause is over, so an out-of-date or modified page cannot cut
-it short. The pause is the `clear_delay_ms` column on `games` (default 10000);
-see `supabase/migration-clear-delay.sql` for how to change it.
+it short. The pauses are the `clear_delay_ms` (default 10000) and `quick_clear_delay_ms`
+(default 2500) columns on `games`; the migration files show how to change them.
 
 Not implemented: transferring the attack (`perevodnoy`), the five-card cap on
 the opening bout, and a turn clock. `config.json` has a `turnSeconds` slot

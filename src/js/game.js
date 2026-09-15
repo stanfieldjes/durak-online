@@ -6,6 +6,7 @@ import {
   canTake,
   canAct,
   canClear,
+  isQuickClear,
   describe,
   roleOf,
   sameCard,
@@ -50,17 +51,23 @@ import { play as playSound, getVolume, setVolume, setSoundActive } from './sound
 import { $, show, setText, clear, toast, cardEl, paintScore } from './ui.js';
 
 /**
- * How long a finished round stays on the table before it clears itself: the
- * defence that beat the last card, or the card that filled the table on a
- * take. Attackers can still throw in while it is showing.
+ * How long a finished round stays on the table before it clears itself.
  *
- * The real value lives on the games row (clear_delay_ms), and submit_move()
- * refuses a clear that comes sooner. Every browser reads it from there, so a
- * stale or modified page cannot cut the pause short. This fallback is only
- * used if the column has not been migrated yet.
+ * Two delays. The long one is for a beaten table that could still take more
+ * cards: attackers can throw in while it shows. The short one is for a table
+ * that cannot (six down, or a defender with nothing left to answer with),
+ * where the pause is only a look at the cards.
+ *
+ * Both live on the games row (clear_delay_ms, quick_clear_delay_ms), and
+ * submit_move() refuses a clear that comes sooner, so a stale or modified page
+ * cannot cut them short. The fallbacks are only used before the migration.
  */
 const FALLBACK_CLEAR_DELAY_MS = 10000;
-const clearDelayMs = () => Number(game?.clear_delay_ms ?? FALLBACK_CLEAR_DELAY_MS);
+const FALLBACK_QUICK_CLEAR_DELAY_MS = 2500;
+const clearDelayMs = (position) =>
+  position && isQuickClear(position)
+    ? Number(game?.quick_clear_delay_ms ?? FALLBACK_QUICK_CLEAR_DELAY_MS)
+    : Number(game?.clear_delay_ms ?? FALLBACK_CLEAR_DELAY_MS);
 
 /** How long the finished table stays on screen before the scores appear. */
 const RESULT_DELAY_MS = 2200;
@@ -731,7 +738,7 @@ function scheduleClear() {
   cancelClear();
   clearArmedFor = s.version;
   if (mySeat !== null && canClear(s, mySeat)) {
-    clearTimer = setTimeout(fireClear, clearDelayMs());
+    clearTimer = setTimeout(fireClear, clearDelayMs(s));
   }
 }
 
@@ -1183,7 +1190,7 @@ function renderPrompt() {
   if (counting && promptBarFor !== clearArmedFor) {
     el.classList.remove('is-clearing');
     void el.offsetWidth; // restart the animation for a new countdown
-    el.style.setProperty('--clear-ms', `${clearDelayMs()}ms`);
+    el.style.setProperty('--clear-ms', `${clearDelayMs(confirmed)}ms`);
     promptBarFor = clearArmedFor;
   }
   if (!counting) promptBarFor = null;
