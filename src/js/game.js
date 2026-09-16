@@ -141,7 +141,7 @@ const discarding = new Set();
 const dealt = new Set();
 let quietPartsQueued = false;
 
-/** Most card backs a fan or the stock shows before counting the rest as +N. */
+/** Most card backs an opponent's fan shows before counting the rest as +N. */
 const FAN_LIMIT = 6;
 
 export function initGame() {
@@ -681,15 +681,15 @@ function planDeal(next) {
 function drawFlight(card, seat, trumpCard, delay) {
   const id = cardId(card);
   const mine = seat === mySeat;
-  // The very last card drawn is the trump lying face up at the bottom of the
-  // stock, so it leaves from there, already showing.
+  // The very last card drawn is the trump lying face up across the bottom of
+  // the stock, so it leaves from there, already showing, and turns upright.
   const isTrump = sameCard(card, trumpCard);
   markArriving(id);
   departing.add(id);
 
   return {
     key: id,
-    from: () => (isTrump && boxOf($(`#deck-pile [data-card="${id}"]`))) || stockTopBox(),
+    from: () => (isTrump && boxOf($('#trump-card .card'))) || stockTopBox(),
     to: handTarget(seat),
     face: mine || isTrump ? cardEl(card, { trump: state?.trump ?? trumpCard.s }) : null,
     flip: isTrump ? (mine ? null : 'down') : mine ? 'up' : null,
@@ -801,10 +801,9 @@ function opponentHandBox(seat) {
   return fanCentreBox(panel?.querySelector('.fan--opponent')) ?? boxOf(panel);
 }
 
-/** The card on top of the stock's fan, which is the one that gets drawn. */
+/** The card on top of the stock, which is the one that gets drawn. */
 function stockTopBox() {
-  const pile = $('#deck-pile');
-  return boxOf(pile?.lastElementChild) ?? fanCentreBox(pile);
+  return boxOf($('#deck-pile')?.lastElementChild) ?? boxOf($('#trump-card .card')) ?? boxOf($('#stock'));
 }
 
 /* ------------------------------------------------------------------ */
@@ -1218,27 +1217,50 @@ function fanOfBacks(count, fanClass, moreClass) {
   return row;
 }
 
+/**
+ * The stock: face-down cards in a tight stack, with the trump lying face up
+ * across the bottom of it and sticking out to the right.
+ *
+ * The stack always spans the same width (--stack-span in the CSS). Its bottom
+ * card never moves, and while there are two or more cards the top card's left
+ * edge never moves either, so as cards are drawn the gaps open up to fill the
+ * same space. Cards
+ * are kept rather than rebuilt, so that spreading out is a slide, not a jump.
+ */
 function renderStock() {
   // Cards already drawn stay here until they actually leave.
   const inStock = state.deck.length + departing.size;
   const trumpShowing = state.deck.length > 0 || departing.has(cardId(state.trumpCard));
+  const backs = Math.max(0, inStock - (trumpShowing ? 1 : 0));
 
-  // Up to six cards, counting the trump: it is the bottom card of the stock,
-  // so it lies face up at the left end, under the backs. Anything past six
-  // is the +N below.
-  const shown = Math.min(inStock, FAN_LIMIT);
+  const trumpBox = $('#trump-card');
+  const trumpEl = trumpBox.firstElementChild;
+  if (!trumpShowing) clear(trumpBox);
+  else if (trumpEl?.dataset.card !== cardId(state.trumpCard)) {
+    clear(trumpBox);
+    trumpBox.append(cardEl(state.trumpCard, { trump: state.trump }));
+  }
+
+  // Drawing takes the top card, which is the last one in the stack.
   const pile = $('#deck-pile');
-  clear(pile);
-  if (trumpShowing && shown > 0) pile.append(cardEl(state.trumpCard, { trump: state.trump }));
-  while (pile.children.length < shown) pile.append(cardEl(null, { faceDown: true }));
-  setText($('#deck-more'), inStock > FAN_LIMIT ? `+${inStock - FAN_LIMIT}` : '');
+  while (pile.children.length > backs) pile.lastElementChild.remove();
+  while (pile.children.length < backs) pile.append(cardEl(null, { faceDown: true }));
+  [...pile.children].forEach((card, i) => {
+    // 1 is the bottom card's place, 0 the top card's edge; the rest share the
+    // distance between them evenly. A last single card stays where the bottom
+    // card lies, on the trump.
+    const along = backs > 1 ? 1 - i / (backs - 1) : 1;
+    card.style.left = `calc(var(--card-w) * var(--stack-span) * ${along.toFixed(4)})`;
+  });
+
+  const stock = $('#stock');
+  stock.title = inStock === 1 ? '1 card left' : `${inStock} cards left`;
 
   // Once the stock is gone, so is the trump card. An empty place shows the
   // trump suit instead, so it is never lost in the endgame.
   const empty = inStock === 0;
   const spot = $('#deck-empty');
   show(spot, empty);
-  show(pile, !empty);
   setText(spot, SUIT_GLYPH[state.trump]);
   spot.classList.toggle('is-red', state.trump === 'H' || state.trump === 'D');
   spot.title = `Trump: ${SUIT_NAME[state.trump]}`;

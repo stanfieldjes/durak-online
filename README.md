@@ -253,10 +253,15 @@ else's hand is not the table's business; your own hand then slides apart to
 fit it in its sorted place. Opponents' hands and the stock count cards as they
 arrive and leave, not before.
 
-Opponents' hands and the stock show at most six cards, with a +N for the
-rest. In the stock the trump card is one of the six: it is the bottom card,
-so it lies face up at the left end of the fan, and draws come off the right.
-Opponents' cards are sized to fit their panel, never past its edge.
+Opponents' hands show at most six cards, with a +N for the rest, sized to
+fit their panel and never past its edge.
+
+The stock is a tight stack of face-down cards lying over the trump card,
+which is turned side on and sticks out to the right. The stack always spans
+the same width (`--stack-span` in the CSS): the bottom card never moves, the
+top card's left edge stays put while two or more cards remain, and the gaps
+between cards widen as the stock runs down. Draws come off the top (left)
+card, and the trump is drawn last, turning upright as it flies.
 
 Timings are `FLIGHT_MS` and `SETTLE_MS` at the top of `fx.js`. With reduced
 motion turned on, cards simply appear where they belong.

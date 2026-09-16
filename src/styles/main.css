@@ -641,24 +641,49 @@ a.btn { display: inline-block; text-decoration: none; }
 .pile__label { font-size: var(--step--1); color: var(--chalk-dim); }
 
 /*
-  The stock, at the same size as your hand: up to six cards fanned left to
-  right with a +N below for the rest. The trump card is the bottom of the
-  stock, so it lies face up at the left end, underneath the others, with its
-  rank and suit showing. Draws come off the right end.
+  The stock, at the same size as your hand: face-down cards in a tight stack,
+  lying over the trump card, which is turned side on with its rank and suit
+  sticking out to the right.
+
+  --stack-span is how far the bottom card of the stack sits to the right of
+  the top one, in card widths. It is 34 gaps of 0.028 card widths (2 to 3px
+  on a normal-sized table): the spacing of the 35 face-down cards in a full
+  stock. With fewer cards the same distance is shared out among them, so the
+  top card's left edge and the bottom card both stay put and the gaps widen.
+  It is kept just under one card width so that even the last two cards
+  still overlap and read as one stack.
+
+  The trump card is rotated about its own centre, so it spans card-h across
+  and card-w down around that centre. It is placed so its left end is under
+  the bottom card and 0.7 card widths stick out past it.
 */
 .stock {
-  display: grid;
-  justify-items: center;
-  align-content: center;
-  gap: 0.3rem;
+  --stack-span: 0.95;
+  position: relative;
+  width: calc(var(--card-w) * (var(--stack-span) + 1.7));
+  height: var(--card-h);
 }
 
-.stock .stock__pile { padding-inline: calc(var(--card-w) * 0.35); }
-.stock .stock__pile .card { margin-inline: calc(var(--card-w) * -0.35); }
-/* A little more of the trump shows than of the backs, enough for "10". */
-.stock .stock__pile .card--trump { margin-right: calc(var(--card-w) * -0.1); }
+.stock__pile { position: absolute; inset: 0; z-index: 2; }
 
-.stock__more,
+.stock__pile .card {
+  position: absolute;
+  top: 0;
+  /* Each card's shadow falls on the edge of the one below, so the stack
+     reads as separate cards even when they are only a few pixels apart. */
+  box-shadow: 1px 0 2px rgba(0, 0, 0, 0.45);
+  transition: left 180ms ease;
+}
+
+.stock__trump {
+  position: absolute;
+  top: 0;
+  left: calc(var(--card-w) * (var(--stack-span) + 0.475));
+  z-index: 1;
+}
+
+.stock__trump .card { transform: rotate(90deg); }
+
 .player__more {
   font-size: var(--step--1);
   font-weight: 500;
@@ -669,6 +694,10 @@ a.btn { display: inline-block; text-decoration: none; }
 
 /* The empty stock shows the trump suit; red suits in red. */
 .stock__empty {
+  position: absolute;
+  top: 0;
+  left: 0;
+  z-index: 3;
   background: rgba(0, 0, 0, 0.25);
   border-color: #000;
   border-style: dashed;
