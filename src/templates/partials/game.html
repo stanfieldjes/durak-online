@@ -28,7 +28,6 @@
 
     <div class="felt__middle">
       <div class="stock" id="stock" aria-label="Stock">
-        <div class="stock__trump" id="trump-card"></div>
         <div class="fan stock__pile" id="deck-pile"></div>
         <div class="pile stock__empty" id="deck-empty" hidden></div>
         <span class="stock__more" id="deck-more"></span>
@@ -50,6 +49,10 @@
         <button type="button" class="btn btn--primary" id="act-pass" hidden>Done for this round</button>
       </div>
     </div>
+
+    <div class="felt__grip" id="table-grip" role="slider" tabindex="0"
+         aria-label="Table size" aria-valuemin="60" aria-valuemax="220" aria-valuenow="100"
+         title="Drag to resize the table. Double-click to fit the window."></div>
   </div>
 
   <div class="result" id="result" hidden>

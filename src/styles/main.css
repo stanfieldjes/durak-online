@@ -43,16 +43,19 @@
   /* Every card is 1 : 1.45. Smaller cards (opponents' hands, the stock) set
      their own --card-w and restate --card-h beside it, so the ratio carries
      over and only the size changes. */
-  --card-base: clamp(48px, 11vw, 76px);
+  /* --table-scale is set on <html> by tablesize.js: fitted to the window, or
+     whatever the player drags the table's corner to. */
+  --table-scale: 1;
+  --card-base: calc(76px * var(--table-scale));
   --card-w: var(--card-base);
   --card-h: calc(var(--card-w) * 1.45);
 
-  /* Card backs: cranberry cloth with a cream lattice and lozenge, in the
-     table's own red and the card faces' cream. */
+  /* Card backs: cranberry cloth with a fine cream lattice, and a gold hammer
+     and sickle in the middle. */
   --back: #8a1628;
   --back-deep: #520a17;
   --back-edge: #2e050d;
-  --back-trim: #efe3c8;
+  --back-emblem: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='29.5 33 897.2 897.2'%3E%3Cpath fill='%23d4a73a' fill-rule='evenodd' d='M78.3 927.9C67.3 926.1 54.7 919.5 46.8 911.3C35.7 899.8 29.6 880.8 32 865.4C33.5 856 35.5 850.7 41.8 839.7C64.1 800.6 109.7 759.4 170 724C189.8 712.4 189.5 712.6 189.8 709.4C191 692.1 203.5 673.4 218.9 665.5C229.6 660.1 244.7 657.7 254.9 659.9L260.2 661L264.1 656.7C273.3 646.2 289.6 644.5 300.9 652.8L304.2 655.3L314.1 645.4L323.9 635.6L333.7 645.2C364.4 675.4 401 697.2 441.3 709.4C463.8 716.2 482.7 718.8 508.5 718.8C543.6 718.7 576.8 713 607.4 701.9L616.2 698.7L461.4 543.9L306.5 389L257.3 438.2L208 487.5L153.7 433.2L99.5 379L203.2 275.3L306.8 171.7L404.7 181.5C458.5 186.8 502.7 191.4 503 191.7C503.2 191.9 476.9 218.6 444.5 251L385.5 310L547.6 472.1L709.7 634.2L717.4 624.9C747 589 764.8 547.6 770.5 501.5C771.3 495.2 771.3 464.8 770.5 458.4C767.6 433.8 764.3 417.1 758.6 397.7C733.9 313.7 673.8 222.1 582.5 129.1C552.9 99 521.2 69.8 491.7 45.7C485.2 40.4 480.1 36 480.5 36C481.7 36 497.9 43.6 519 54.1C656.7 122.3 770.3 215.2 828.6 307.2C858.9 355 876.7 403.9 881.9 453.5C883.3 466.9 882.5 513.2 880.6 527.5C873 584.9 856.3 631.2 827.4 675.2C818.9 688.1 806.1 704.8 798.1 713.3L793.6 718.1L853.7 778.3C886.7 811.4 915 840.5 916.5 842.9C921.1 850.3 924.1 859.7 924.7 868.6C925.9 885.7 920.6 899.6 908.3 911.9C899.9 920.2 892.3 924.6 882 927.1C874.3 928.9 861.7 928.7 854.5 926.6C840.2 922.4 841.2 923.4 770.5 852.9L704.5 787.2L694.5 792.2C657.8 810.8 610.9 824.9 573.5 828.5C569.6 828.9 565.4 829.4 564 829.6C558.8 830.6 519.1 830.8 509.5 830C437.7 823.5 370.6 793.8 310.7 742C304.2 736.4 298.7 732 298.6 732.2C298.5 732.3 296.9 735.6 295.1 739.3C291.1 747.6 281.9 757.7 274.1 762.4C267.9 766.2 256.5 770 251.5 770C249.7 770 247.8 770.6 247.2 771.2C246.7 771.9 242.3 779.2 237.5 787.5C204.2 844.4 168.1 886.4 130.5 911.8C109.6 925.9 94.7 930.5 78.3 927.9Z'/%3E%3C/svg%3E");
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -107,9 +110,14 @@ body {
   color: inherit;
 }
 
-.brand__mark { align-self: center; line-height: 0; }
-.brand__card { fill: var(--card); stroke: var(--card-edge); }
-.brand__pip { fill: var(--red); }
+/* The logo is a card back like the ones on the table, drawn by the same
+   .card--back rule, so it always matches them. */
+.brand__mark {
+  --card-w: 25px;
+  --card-h: calc(var(--card-w) * 1.45);
+  align-self: center;
+  flex-shrink: 0;
+}
 
 .brand__word { font-size: var(--step-1); font-weight: 700; letter-spacing: -0.01em; }
 .brand__latin { font-size: var(--step--1); color: var(--chalk-rail); font-weight: 400; }
@@ -148,6 +156,12 @@ body {
   width: min(72rem, 100%);
   margin-inline: auto;
   padding: clamp(1.25rem, 4vw, 2.75rem) clamp(1rem, 4vw, 2.5rem);
+}
+
+/* A table gets the whole width of the window; the felt sizes itself inside it. */
+.view:has(> .panel--game:not([hidden])) {
+  width: 100%;
+  padding-block: clamp(0.75rem, 2vw, 1.5rem);
 }
 
 .footer {
@@ -391,6 +405,9 @@ a.btn { display: inline-block; text-decoration: none; }
 /* ---------- the table ---------- */
 
 .felt {
+  position: relative;
+  width: min(100%, calc(62.5rem * var(--table-scale)));
+  margin-inline: auto;
   display: grid;
   gap: clamp(0.75rem, 2.5vw, 1.5rem);
   padding: clamp(0.75rem, 2.5vw, 1.5rem);
@@ -400,6 +417,28 @@ a.btn { display: inline-block; text-decoration: none; }
     radial-gradient(120% 100% at 50% 0%, #1a7a4b 0%, var(--table) 55%, var(--table-deep) 100%);
   box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.4);
 }
+
+/* Drag the table's bottom-right corner to resize it. Double-click, or Home,
+   goes back to fitting the window. */
+.felt__grip {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 22px;
+  height: 22px;
+  cursor: nwse-resize;
+  touch-action: none;
+  border-radius: 3px;
+  color: rgba(255, 255, 255, 0.4);
+  background:
+    linear-gradient(135deg, transparent 0 45%, currentColor 45% 52%, transparent 52% 62%,
+      currentColor 62% 69%, transparent 69% 79%, currentColor 79% 86%, transparent 86%);
+}
+
+.felt__grip:hover,
+.felt.is-resizing .felt__grip { color: #fff; }
+
+.felt.is-resizing { user-select: none; }
 
 .felt__bar {
   display: flex;
@@ -509,6 +548,8 @@ a.btn { display: inline-block; text-decoration: none; }
 .opponents[data-count="3"] > .player:nth-child(3) { grid-column: 3; grid-row: 2; }
 
 .player {
+  /* Opponents' cards size themselves to this panel (see .fan--opponent). */
+  container-type: inline-size;
   border: 1px solid var(--table-line);
   border-radius: var(--radius);
   background: rgba(0, 0, 0, 0.18);
@@ -543,7 +584,7 @@ a.btn { display: inline-block; text-decoration: none; }
 .player__role { margin-left: auto; font-size: var(--step--1); color: var(--chalk-dim); }
 .player--defending .player__role { color: var(--chalk); }
 .player--attacking .player__role { color: var(--red-soft); }
-.player__count { font-size: var(--step--1); color: var(--chalk-dim); }
+.player__count { font-size: var(--step--1); color: var(--chalk-dim); min-height: 1.55em; }
 
 .felt__middle {
   display: grid;
@@ -600,26 +641,22 @@ a.btn { display: inline-block; text-decoration: none; }
 .pile__label { font-size: var(--step--1); color: var(--chalk-dim); }
 
 /*
-  The stock, drawn at a smaller card size: the trump card stands face up at
-  the top, the rest of the stock fans out below it (six at most), and any
-  more are counted underneath.
+  The stock, at the same size as your hand: up to six cards fanned left to
+  right with a +N below for the rest. The trump card is the bottom of the
+  stock, so it lies face up at the left end, underneath the others, with its
+  rank and suit showing. Draws come off the right end.
 */
 .stock {
-  --card-w: calc(var(--card-base) * 0.55);
-  --card-h: calc(var(--card-w) * 1.45);
   display: grid;
   justify-items: center;
   align-content: center;
   gap: 0.3rem;
-  min-width: calc(var(--card-w) * 3.2);
 }
 
-.stock__trump { min-width: var(--card-w); min-height: var(--card-h); }
-
-/* Tighter than a hand, and padded by the same amount so the overlap stays
-   inside the fan's own box instead of spilling past the felt's edge. */
-.stock .stock__pile { padding-inline: calc(var(--card-w) * 0.3); }
-.stock .stock__pile .card { margin-inline: calc(var(--card-w) * -0.3); }
+.stock .stock__pile { padding-inline: calc(var(--card-w) * 0.35); }
+.stock .stock__pile .card { margin-inline: calc(var(--card-w) * -0.35); }
+/* A little more of the trump shows than of the backs, enough for "10". */
+.stock .stock__pile .card--trump { margin-right: calc(var(--card-w) * -0.1); }
 
 .stock__more,
 .player__more {
@@ -666,6 +703,10 @@ a.btn { display: inline-block; text-decoration: none; }
 .discard { display: grid; justify-items: center; gap: 0.3rem; }
 
 .felt__bottom { display: grid; gap: 0.8rem; justify-items: center; }
+
+/* Room for the Take / Done buttons is kept even while they are hidden, so the
+   table does not change height every time they come and go. */
+.felt__bottom .actions { min-height: 2.75rem; }
 
 /*
   The prompt is the only thing telling you what the table wants from you, so it
@@ -749,22 +790,31 @@ a.btn { display: inline-block; text-decoration: none; }
   display: grid;
   grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.4rem;
 }
 
 .hand-row > :last-child { justify-self: start; }
+.hand-row > :first-child,
+.hand-row > :last-child { min-width: 2rem; }
 
+/*
+  Opponents' cards are as large as their panel allows. Six cards overlapping
+  at this spacing take 3.25 card-widths; the rest of the row is kept free for
+  the +N on the right and an equal margin on the left, so the fan stays
+  centred and never runs past the panel's edge. Capped a little under the
+  size of your own cards.
+*/
 .fan--opponent {
-  --card-w: calc(var(--card-base) * 0.5);
+  --card-w: min(calc(var(--card-base) * 0.8), calc((100cqi - 4.8rem) / 3.25));
   --card-h: calc(var(--card-w) * 1.45);
 }
 
 /* Overlapping, with a shadow at each edge, so a fan of backs reads as a
    countable row of cards rather than one block. */
-.fan--opponent { padding-inline: calc(var(--card-w) * 0.2); }
+.fan--opponent { padding-inline: calc(var(--card-w) * 0.275); }
 
 .fan--opponent .card {
-  margin-inline: calc(var(--card-w) * -0.2);
+  margin-inline: calc(var(--card-w) * -0.275);
   box-shadow: -2px 0 3px rgba(0, 0, 0, 0.45);
 }
 
@@ -798,39 +848,18 @@ a.btn { display: inline-block; text-decoration: none; }
 .card--red { color: var(--red); }
 
 /*
-  Card back: a fine cream lattice over cranberry, shaded darker toward the
-  edges, with a cream frame and a lozenge in the middle. Every measurement is
-  a share of the card's width, so the same back reads at every card size.
+  Card back: a gold hammer and sickle on cranberry, over a fine cream lattice
+  that darkens toward the edges. Sizes are shares of the card's width, so the
+  same back reads at every card size.
 */
 .card--back {
   padding: 0;
   border-color: var(--back-edge);
   background:
+    var(--back-emblem) 50% 50% / 58% auto no-repeat,
     repeating-linear-gradient(60deg, rgba(239, 227, 200, 0.2) 0 1px, transparent 1px calc(var(--card-w) * 0.12)),
     repeating-linear-gradient(-60deg, rgba(239, 227, 200, 0.2) 0 1px, transparent 1px calc(var(--card-w) * 0.12)),
     radial-gradient(ellipse at 50% 45%, #a21d33 0%, var(--back) 50%, var(--back-deep) 100%);
-}
-
-.card--back::before {
-  content: '';
-  position: absolute;
-  inset: calc(var(--card-w) * 0.075);
-  border: 1px solid var(--back-trim);
-  border-radius: 2px;
-  opacity: 0.8;
-}
-
-.card--back::after {
-  content: '';
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: calc(var(--card-w) * 0.3);
-  height: calc(var(--card-w) * 0.3);
-  transform: translate(-50%, -50%) rotate(45deg);
-  border: 1px solid var(--back-trim);
-  background: radial-gradient(circle, var(--back-trim) 0 20%, var(--back-deep) 22%);
-  box-shadow: 0 0 0 calc(var(--card-w) * 0.03) var(--back-deep), 0 0 0 calc(var(--card-w) * 0.045) rgba(239, 227, 200, 0.5);
 }
 
 /* Trumps are ringed in their own colour, so the suit that matters is obvious
@@ -1123,6 +1152,9 @@ button.card.is-selected {
   .felt__middle { grid-template-columns: auto 1fr; }
   .discard { grid-column: 2; text-align: center; }
   .masthead { flex-wrap: wrap; }
+  :root { --card-base: clamp(40px, 11vw, 60px); }
+  .felt { width: 100%; }
+  .felt__grip { display: none; }
   .opponents { grid-template-columns: 1fr 1fr; }
   /* The desktop placements use three columns; on two, let panels flow. */
   .opponents > .player { grid-column: auto !important; grid-row: auto !important; }

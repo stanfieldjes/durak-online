@@ -48,6 +48,7 @@ import {
   DEAL_GAP_MS,
 } from './fx.js';
 import { play as playSound, getVolume, setVolume, setSoundActive } from './sound.js';
+import { initTableSize, tableShown, tableHidden } from './tablesize.js';
 import { $, show, setText, clear, toast, cardEl, paintScore } from './ui.js';
 
 /**
@@ -144,6 +145,7 @@ let quietPartsQueued = false;
 const FAN_LIMIT = 6;
 
 export function initGame() {
+  initTableSize($('#felt'), $('#table-grip'));
   $('#act-take').addEventListener('click', () => play({ type: 'take' }));
   $('#act-pass').addEventListener('click', () => play({ type: 'pass' }));
   $('#act-leave').addEventListener('click', onLeave);
@@ -381,6 +383,7 @@ function reset() {
   cancelClear();
   promptBarFor = null;
   stopMotion();
+  tableHidden();
   dealPlayed = false;
   announcedThrough = 0;
   game = null;
@@ -678,15 +681,15 @@ function planDeal(next) {
 function drawFlight(card, seat, trumpCard, delay) {
   const id = cardId(card);
   const mine = seat === mySeat;
-  // The very last card drawn is the trump lying face up under the stock, so it
-  // leaves from there, already showing, rather than off the top of the pile.
+  // The very last card drawn is the trump lying face up at the bottom of the
+  // stock, so it leaves from there, already showing.
   const isTrump = sameCard(card, trumpCard);
   markArriving(id);
   departing.add(id);
 
   return {
     key: id,
-    from: () => (isTrump && boxOf($('#trump-card .card'))) || stockTopBox(),
+    from: () => (isTrump && boxOf($(`#deck-pile [data-card="${id}"]`))) || stockTopBox(),
     to: handTarget(seat),
     face: mine || isTrump ? cardEl(card, { trump: state?.trump ?? trumpCard.s }) : null,
     flip: isTrump ? (mine ? null : 'down') : mine ? 'up' : null,
@@ -1101,6 +1104,7 @@ function render() {
   renderHand();
   renderPrompt();
   renderActions();
+  tableShown();
 }
 
 function renderWaiting() {
@@ -1219,25 +1223,21 @@ function renderStock() {
   const inStock = state.deck.length + departing.size;
   const trumpShowing = state.deck.length > 0 || departing.has(cardId(state.trumpCard));
 
-  // The trump card is the last card of the stock, turned face up and stood
-  // above the rest, so the suit that matters is readable all game.
-  const trumpBox = $('#trump-card');
-  clear(trumpBox);
-  if (trumpShowing) trumpBox.append(cardEl(state.trumpCard, { trump: state.trump }));
-
-  // The rest of the stock as a fan of up to six, with +N below for the others.
-  const backs = inStock - (trumpShowing ? 1 : 0);
+  // Up to six cards, counting the trump: it is the bottom card of the stock,
+  // so it lies face up at the left end, under the backs. Anything past six
+  // is the +N below.
+  const shown = Math.min(inStock, FAN_LIMIT);
   const pile = $('#deck-pile');
   clear(pile);
-  for (let i = 0; i < Math.min(backs, FAN_LIMIT); i++) pile.append(cardEl(null, { faceDown: true }));
-  setText($('#deck-more'), backs > FAN_LIMIT ? `+${backs - FAN_LIMIT}` : '');
+  if (trumpShowing && shown > 0) pile.append(cardEl(state.trumpCard, { trump: state.trump }));
+  while (pile.children.length < shown) pile.append(cardEl(null, { faceDown: true }));
+  setText($('#deck-more'), inStock > FAN_LIMIT ? `+${inStock - FAN_LIMIT}` : '');
 
   // Once the stock is gone, so is the trump card. An empty place shows the
   // trump suit instead, so it is never lost in the endgame.
   const empty = inStock === 0;
   const spot = $('#deck-empty');
   show(spot, empty);
-  show(trumpBox, !empty);
   show(pile, !empty);
   setText(spot, SUIT_GLYPH[state.trump]);
   spot.classList.toggle('is-red', state.trump === 'H' || state.trump === 'D');

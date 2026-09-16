@@ -213,6 +213,7 @@ src/templates/           base.html and the view partials
 src/styles/main.css
 src/js/durak.js          rules engine — pure, no DOM, no network
 src/js/fx.js             card movement, animated as copies that follow each card
+src/js/tablesize.js      fits the table to the window; the drag-to-resize corner
 src/js/sound.js          sound effects, pooled and mutable
 src/audio/               the clips themselves
 src/js/score.js          score model, mirrored by public.score()
@@ -252,11 +253,23 @@ else's hand is not the table's business; your own hand then slides apart to
 fit it in its sorted place. Opponents' hands and the stock count cards as they
 arrive and leave, not before.
 
-Opponents' hands and the stock show at most six backs, with a +N for the
-rest. The trump card stands face up above the stock until it is drawn.
+Opponents' hands and the stock show at most six cards, with a +N for the
+rest. In the stock the trump card is one of the six: it is the bottom card,
+so it lies face up at the left end of the fan, and draws come off the right.
+Opponents' cards are sized to fit their panel, never past its edge.
 
 Timings are `FLIGHT_MS` and `SETTLE_MS` at the top of `fx.js`. With reduced
 motion turned on, cards simply appear where they belong.
+
+## Table size
+
+Everything on the felt is sized from one number, `--table-scale`, set by
+`src/js/tablesize.js`. Until a player picks a size, the table fits the window:
+as large as it can be without scrolling, but never below 85% (a short screen
+scrolls a little rather than shrinking the cards). Dragging the grip in the
+felt's bottom-right corner sets a size, which the browser remembers;
+double-clicking the grip, or pressing Home while it has focus, goes back to
+fitting the window. Arrow keys resize it from the keyboard.
 
 ## Sound
 
