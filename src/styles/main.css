@@ -40,8 +40,19 @@
 
   --gap: 1rem;
   --radius: 4px;
-  --card-w: clamp(48px, 11vw, 76px);
+  /* Every card is 1 : 1.45. Smaller cards (opponents' hands, the stock) set
+     their own --card-w and restate --card-h beside it, so the ratio carries
+     over and only the size changes. */
+  --card-base: clamp(48px, 11vw, 76px);
+  --card-w: var(--card-base);
   --card-h: calc(var(--card-w) * 1.45);
+
+  /* Card backs: cranberry cloth with a cream lattice and lozenge, in the
+     table's own red and the card faces' cream. */
+  --back: #8a1628;
+  --back-deep: #520a17;
+  --back-edge: #2e050d;
+  --back-trim: #efe3c8;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -544,13 +555,12 @@ a.btn { display: inline-block; text-decoration: none; }
   border-block: 1px solid rgba(255, 255, 255, 0.12);
 }
 
-/* A face-down pile of cards: the stock, and the beaten pile beside it. */
+/* A place on the felt the size of a card: the beaten pile, and the empty stock. */
 .pile {
   width: var(--card-w);
   height: var(--card-h);
   border-radius: var(--radius);
-  border: 1px solid #000;
-  background: repeating-linear-gradient(45deg, #14181c 0 6px, #0c1013 6px 12px);
+  border: 1px solid var(--back-edge);
   display: grid;
   place-items: center;
   font-weight: 700;
@@ -558,54 +568,77 @@ a.btn { display: inline-block; text-decoration: none; }
   color: var(--chalk);
 }
 
-/* Angled the other way and warmer, so the two piles never read as the same. */
-.pile--discard { background: repeating-linear-gradient(-45deg, #2a1416 0 6px, #1c0e10 6px 12px); }
+/* The beaten pile is a stack of backs, dimmed and squared off with a couple of
+   offset edges, so it reads as out of play rather than as the stock. */
+.pile--discard {
+  background:
+    linear-gradient(rgba(10, 4, 6, 0.5), rgba(10, 4, 6, 0.5)),
+    repeating-linear-gradient(60deg, rgba(239, 227, 200, 0.16) 0 1px, transparent 1px calc(var(--card-w) * 0.12)),
+    repeating-linear-gradient(-60deg, rgba(239, 227, 200, 0.16) 0 1px, transparent 1px calc(var(--card-w) * 0.12)),
+    var(--back);
+  box-shadow: 2px 2px 0 var(--back-deep), 4px 4px 0 var(--back-edge);
+}
+
+.pile--discard span {
+  padding: 0.1rem 0.35rem;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.6);
+}
+
+.pile--discard span:empty { display: none; }
 
 /* Before anything is beaten the pile is an empty place on the felt, the same
    way the stock looks once it runs out, so beaten cards always have a
    visible destination. */
 .pile--discard[data-empty="true"] {
   background: rgba(0, 0, 0, 0.25);
+  border-color: #000;
   border-style: dashed;
+  box-shadow: none;
 }
 
 .pile__label { font-size: var(--step--1); color: var(--chalk-dim); }
 
 /*
-  The trump card lies under the stock, turned side on, the way it sits on a real
-  table. The stock covers its left end; the corner carrying the rank and suit
-  ends up on the exposed right, so the suit stays readable all game.
-
-  The card is rotated about its own centre, so its rotated box spans
-  card-h wide and card-w tall around that centre. The offsets below place that
-  box to stick out to the right of the stock and sit vertically centred.
+  The stock, drawn at a smaller card size: the trump card stands face up at
+  the top, the rest of the stock fans out below it (six at most), and any
+  more are counted underneath.
 */
 .stock {
-  position: relative;
-  width: calc(var(--card-w) * 1.75);
-  height: var(--card-h);
+  --card-w: calc(var(--card-base) * 0.55);
+  --card-h: calc(var(--card-w) * 1.45);
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 0.3rem;
+  min-width: calc(var(--card-w) * 3.2);
 }
 
-.stock__trump {
-  position: absolute;
-  left: calc(var(--card-w) * 0.475);
-  top: 0;
-  z-index: 1;
-}
+.stock__trump { min-width: var(--card-w); min-height: var(--card-h); }
 
-.stock__trump .card { transform: rotate(90deg); }
+/* Tighter than a hand, and padded by the same amount so the overlap stays
+   inside the fan's own box instead of spilling past the felt's edge. */
+.stock .stock__pile { padding-inline: calc(var(--card-w) * 0.3); }
+.stock .stock__pile .card { margin-inline: calc(var(--card-w) * -0.3); }
 
-.stock__pile { position: absolute; left: 0; top: 0; z-index: 2; }
-
-.stock__pile[data-empty="true"] {
-  background: rgba(0, 0, 0, 0.25);
-  border-style: dashed;
+.stock__more,
+.player__more {
+  font-size: var(--step--1);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
   color: var(--chalk);
-  font-size: var(--step-2);
+  min-height: 1.2em;
 }
 
 /* The empty stock shows the trump suit; red suits in red. */
-.stock__pile[data-empty="true"].is-red { color: #ff8b83; }
+.stock__empty {
+  background: rgba(0, 0, 0, 0.25);
+  border-color: #000;
+  border-style: dashed;
+  font-size: var(--step-1);
+}
+
+.stock__empty.is-red { color: #ff8b83; }
 
 .slots {
   display: flex;
@@ -697,22 +730,45 @@ a.btn { display: inline-block; text-decoration: none; }
   to { transform: scaleX(0); }
 }
 
-.fan { display: flex; justify-content: center; min-height: var(--card-h); }
-.fan .card { margin-inline: calc(var(--card-w) * -0.18); }
+/* min-width and min-height are one card, which is also the size cards
+   arriving in the fan fly toward (game.js reads them). */
+.fan {
+  display: flex;
+  justify-content: center;
+  min-width: var(--card-w);
+  min-height: var(--card-h);
+}
+/* Cards never shrink to fit: squeezing one changes its shape. A fan that
+   runs out of room wraps instead (your own hand; the others cap at six). */
+.fan .card { margin-inline: calc(var(--card-w) * -0.18); flex-shrink: 0; }
+.fan--mine { flex-wrap: wrap; row-gap: 6px; }
 
-.fan--opponent { min-height: calc(var(--card-h) * 0.5); align-items: flex-start; }
-
-.fan--opponent .card {
-  height: calc(var(--card-h) * 0.5);
-  width: calc(var(--card-w) * 0.72);
-  /* Barely overlapping, each with a rim, so a fan of backs reads as a countable
-     row of cards instead of one striped block. */
-  margin-inline: calc(var(--card-w) * -0.12);
-  border-color: #000;
-  box-shadow: -2px 0 0 rgba(0, 0, 0, 0.55), inset 1px 0 0 rgba(255, 255, 255, 0.16);
+/* A fan of backs with its +N beside it. The fan takes the middle column, so
+   it stays centred whether or not the count is showing. */
+.hand-row {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: 0.5rem;
 }
 
-.fan--opponent .card:first-child { box-shadow: inset 1px 0 0 rgba(255, 255, 255, 0.16); }
+.hand-row > :last-child { justify-self: start; }
+
+.fan--opponent {
+  --card-w: calc(var(--card-base) * 0.5);
+  --card-h: calc(var(--card-w) * 1.45);
+}
+
+/* Overlapping, with a shadow at each edge, so a fan of backs reads as a
+   countable row of cards rather than one block. */
+.fan--opponent { padding-inline: calc(var(--card-w) * 0.2); }
+
+.fan--opponent .card {
+  margin-inline: calc(var(--card-w) * -0.2);
+  box-shadow: -2px 0 3px rgba(0, 0, 0, 0.45);
+}
+
+.fan--opponent .card:first-child { box-shadow: none; }
 
 .actions { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }
 
@@ -741,9 +797,40 @@ a.btn { display: inline-block; text-decoration: none; }
 
 .card--red { color: var(--red); }
 
+/*
+  Card back: a fine cream lattice over cranberry, shaded darker toward the
+  edges, with a cream frame and a lozenge in the middle. Every measurement is
+  a share of the card's width, so the same back reads at every card size.
+*/
 .card--back {
-  background: repeating-linear-gradient(45deg, #14181c 0 6px, #0c1013 6px 12px);
-  border-color: #000;
+  padding: 0;
+  border-color: var(--back-edge);
+  background:
+    repeating-linear-gradient(60deg, rgba(239, 227, 200, 0.2) 0 1px, transparent 1px calc(var(--card-w) * 0.12)),
+    repeating-linear-gradient(-60deg, rgba(239, 227, 200, 0.2) 0 1px, transparent 1px calc(var(--card-w) * 0.12)),
+    radial-gradient(ellipse at 50% 45%, #a21d33 0%, var(--back) 50%, var(--back-deep) 100%);
+}
+
+.card--back::before {
+  content: '';
+  position: absolute;
+  inset: calc(var(--card-w) * 0.075);
+  border: 1px solid var(--back-trim);
+  border-radius: 2px;
+  opacity: 0.8;
+}
+
+.card--back::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: calc(var(--card-w) * 0.3);
+  height: calc(var(--card-w) * 0.3);
+  transform: translate(-50%, -50%) rotate(45deg);
+  border: 1px solid var(--back-trim);
+  background: radial-gradient(circle, var(--back-trim) 0 20%, var(--back-deep) 22%);
+  box-shadow: 0 0 0 calc(var(--card-w) * 0.03) var(--back-deep), 0 0 0 calc(var(--card-w) * 0.045) rgba(239, 227, 200, 0.5);
 }
 
 /* Trumps are ringed in their own colour, so the suit that matters is obvious
@@ -1037,6 +1124,8 @@ button.card.is-selected {
   .discard { grid-column: 2; text-align: center; }
   .masthead { flex-wrap: wrap; }
   .opponents { grid-template-columns: 1fr 1fr; }
+  /* The desktop placements use three columns; on two, let panels flow. */
+  .opponents > .player { grid-column: auto !important; grid-row: auto !important; }
   .player__role { margin-left: 0; width: 100%; }
 }
 

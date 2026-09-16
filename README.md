@@ -245,10 +245,17 @@ with where it is in the new one, rather than by reading the log, so the
 animation cannot disagree with the game: beaten cards can only fly to the
 pile, because that is where the state put them.
 
-The new position still renders at once. A card that is on its way sits in its
-real place but invisible (`is-landing`) until its copy arrives, the stock
-counts down as cards leave it, and the beaten pile counts up as they land.
-Timings are the `FLIGHT_MS` constants at the top of `fx.js`. With reduced
+The new position still renders at once. A card on its way to the table waits
+invisibly in its slot (`is-landing`) until its copy arrives. A card on its way
+to a hand flies to the middle of that hand, since where it goes in someone
+else's hand is not the table's business; your own hand then slides apart to
+fit it in its sorted place. Opponents' hands and the stock count cards as they
+arrive and leave, not before.
+
+Opponents' hands and the stock show at most six backs, with a +N for the
+rest. The trump card stands face up above the stock until it is drawn.
+
+Timings are `FLIGHT_MS` and `SETTLE_MS` at the top of `fx.js`. With reduced
 motion turned on, cards simply appear where they belong.
 
 ## Sound

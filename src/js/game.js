@@ -42,6 +42,7 @@ import {
   clearEffects,
   reducedMotion,
   FLIGHT_MS,
+  SETTLE_MS,
   CLEAR_GAP_MS,
   DRAW_GAP_MS,
   DEAL_GAP_MS,
@@ -124,7 +125,9 @@ let announcedThrough = 0;
  * looks while its copy is in the air. Tracked by identity, never by position
  * in a hand, because hands re-sort and shrink under a card that is mid-flight.
  *
- *   landing     rendered in its new place, but invisible until its copy lands
+ *   landing     not shown in its new place until its copy lands: left out of
+ *               a hand entirely (the hand makes room when it arrives), or held
+ *               invisible in its slot on the table
  *   departing   drawn in the state, but still counted in the stock until its
  *               copy leaves (so the pile, and the trump under it, empty card
  *               by card rather than all at once)
@@ -135,10 +138,10 @@ const landing = new Set();
 const departing = new Set();
 const discarding = new Set();
 const dealt = new Set();
-/** The order cards were sent in, so an opponent's arrivals fill their fan in turn. */
-const sentAt = new Map();
-let sendCount = 0;
 let quietPartsQueued = false;
+
+/** Most card backs a fan or the stock shows before counting the rest as +N. */
+const FAN_LIMIT = 6;
 
 export function initGame() {
   $('#act-take').addEventListener('click', () => play({ type: 'take' }));
@@ -539,7 +542,6 @@ function stopMotion() {
   departing.clear();
   discarding.clear();
   dealt.clear();
-  sentAt.clear();
   dealing = false;
 }
 
@@ -605,8 +607,8 @@ function planMoves(previous, next) {
       flip: mine ? null : 'up',
       duration: FLIGHT_MS.play,
       lift: 18,
-      onLand: () => {
-        landed(id);
+      onLand: (box) => {
+        landed(id, box);
         playSound('play');
       },
     });
@@ -625,13 +627,13 @@ function planMoves(previous, next) {
     flights.push({
       key: id,
       from: boxOf(tableCardEl(id)),
-      to: to.in === 'hand' ? handTarget(to.seat, id) : () => boxOf($('#discard .pile')),
+      to: to.in === 'hand' ? handTarget(to.seat) : () => boxOf($('#discard .pile')),
       face: cardEl(card, { trump }),
       flip: toMe ? null : 'down',
       duration,
       delay,
       lift: 10,
-      onLand: () => landed(id),
+      onLand: (box) => landed(id, box),
     });
   });
 
@@ -684,8 +686,8 @@ function drawFlight(card, seat, trumpCard, delay) {
 
   return {
     key: id,
-    from: () => (isTrump && boxOf($('#trump-card .card'))) || boxOf($('#deck-pile')),
-    to: handTarget(seat, id),
+    from: () => (isTrump && boxOf($('#trump-card .card'))) || stockTopBox(),
+    to: handTarget(seat),
     face: mine || isTrump ? cardEl(card, { trump: state?.trump ?? trumpCard.s }) : null,
     flip: isTrump ? (mine ? null : 'down') : mine ? 'up' : null,
     duration: FLIGHT_MS.draw,
@@ -695,7 +697,7 @@ function drawFlight(card, seat, trumpCard, delay) {
       departing.delete(id);
       refreshQuietParts();
     },
-    onLand: () => landed(id),
+    onLand: (box) => landed(id, box),
     onCancel: () => {
       departing.delete(id);
       dealt.delete(id);
@@ -704,25 +706,34 @@ function drawFlight(card, seat, trumpCard, delay) {
   };
 }
 
-/** Mark a card as on its way, so its destination renders invisible until it lands. */
+/** Mark a card as on its way, so it is not shown in its new place until it lands. */
 function markArriving(id) {
   landing.add(id);
-  sentAt.set(id, ++sendCount);
 }
 
-/** A card's copy has arrived: show the real one in the same frame. */
-function landed(id) {
+/**
+ * A card's copy has arrived at `box`. On the table, the real card is already
+ * in its slot and is simply revealed. In your hand it is added now, sliding
+ * from where its copy landed into its sorted place while the others move over
+ * to make room.
+ */
+function landed(id, box) {
   landing.delete(id);
-  sentAt.delete(id);
   discarding.delete(id);
   for (const el of document.querySelectorAll(`[data-card="${id}"].is-landing`)) {
     el.classList.remove('is-landing');
   }
 
-  if (dealt.delete(id) && dealing && dealt.size === 0) {
-    dealing = false;
-    render(); // the hand becomes playable
-    return;
+  const finishedDeal = dealt.delete(id) && dealing && dealt.size === 0;
+  if (finishedDeal) dealing = false;
+
+  const inMyHand = Boolean(state?.hands[mySeat]?.some((card) => cardId(card) === id));
+  if (state && (inMyHand || finishedDeal)) {
+    renderHand({ arrivals: inMyHand && box ? new Map([[id, box]]) : null });
+  }
+  if (finishedDeal) {
+    renderPrompt();
+    renderActions();
   }
   refreshQuietParts();
 }
@@ -759,39 +770,38 @@ const seatPanel = (seat) => document.querySelector(`.player[data-seat="${seat}"]
 const handCardEl = (id) => document.querySelector(`#my-hand [data-card="${id}"]`);
 const tableCardEl = (id) => document.querySelector(`#slots [data-card="${id}"]`);
 
-/** Where a card is heading in a seat's hand, looked up afresh each frame. */
-function handTarget(seat, id) {
-  if (seat === mySeat) return () => boxOf(handCardEl(id));
-  return () => opponentArrivalBox(seat, id);
-}
-
 /**
- * An opponent's arriving cards wait as invisible backs at the end of their
- * fan. Each one aims for its own spot, in the order they were sent.
+ * The middle of a fan, sized as one of its cards. Arrivals aim here rather
+ * than at a particular spot: where a card goes in an opponent's hand is not
+ * something the rest of the table gets to see, and in your own hand the card
+ * finds its place once it has arrived.
  */
-function opponentArrivalBox(seat, id) {
-  const panel = seatPanel(seat);
-  if (!panel) return null;
-  const fan = panel.querySelector('.fan--opponent');
-  const spots = fan ? fan.querySelectorAll('.card.is-landing') : [];
-
-  let ahead = 0;
-  const mine = sentAt.get(id) ?? Infinity;
-  for (const card of state?.hands[seat] ?? []) {
-    const other = cardId(card);
-    if (other !== id && landing.has(other) && (sentAt.get(other) ?? 0) < mine) ahead++;
-  }
-
-  const spot = spots.length ? spots[Math.min(ahead, spots.length - 1)] : fan?.lastElementChild;
-  return boxOf(spot) ?? boxOf(fan) ?? boxOf(panel);
+function fanCentreBox(fan) {
+  if (!fan || !fan.isConnected) return null;
+  const rect = fan.getBoundingClientRect();
+  const style = getComputedStyle(fan);
+  const w = parseFloat(style.minWidth);
+  const h = parseFloat(style.minHeight);
+  if (!w || !h) return null;
+  return { cx: rect.left + rect.width / 2, cy: rect.top + rect.height / 2, w, h, angle: 0 };
 }
 
-/** Where an opponent's card comes from: the last card showing in their fan. */
+/** Where cards arriving in a seat's hand head for, looked up afresh each frame. */
+function handTarget(seat) {
+  if (seat === mySeat) return () => fanCentreBox($('#my-hand'));
+  return () => opponentHandBox(seat);
+}
+
+/** The middle of an opponent's hand: where their cards arrive and leave from. */
 function opponentHandBox(seat) {
   const panel = seatPanel(seat);
-  if (!panel) return null;
-  const showing = panel.querySelectorAll('.fan--opponent .card:not(.is-landing)');
-  return boxOf(showing[showing.length - 1]) ?? boxOf(panel.querySelector('.fan--opponent')) ?? boxOf(panel);
+  return fanCentreBox(panel?.querySelector('.fan--opponent')) ?? boxOf(panel);
+}
+
+/** The card on top of the stock's fan, which is the one that gets drawn. */
+function stockTopBox() {
+  const pile = $('#deck-pile');
+  return boxOf(pile?.lastElementChild) ?? fanCentreBox(pile);
 }
 
 /* ------------------------------------------------------------------ */
@@ -1170,46 +1180,68 @@ function renderOpponents() {
 
     head.append(name, rating, role);
 
-    // Cards still flying in hold their place in the fan, invisibly, so each
-    // one has a spot to land on and the fan does not jump as they arrive.
-    const fan = document.createElement('div');
-    fan.className = 'fan fan--opponent';
+    // Only cards that have arrived count; one still in the air joins when it lands.
     const hand = state.hands[seat];
-    const arriving = hand.filter((card) => landing.has(cardId(card))).length;
-    const count = hand.length - arriving;
-    const showing = Math.min(count, 10);
-    for (let i = 0; i < Math.min(hand.length, 10); i++) {
-      const back = cardEl(null, { faceDown: true });
-      if (i >= showing) back.classList.add('is-landing');
-      fan.append(back);
-    }
+    const count = hand.length - hand.filter((card) => landing.has(cardId(card))).length;
 
     const tally = document.createElement('span');
     tally.className = 'player__count';
     tally.textContent = dealing && count === 0 ? '' : count === 1 ? '1 card' : `${count} cards`;
 
-    panel.append(head, fan, tally);
+    panel.append(head, fanOfBacks(count, 'fan fan--opponent', 'player__more'), tally);
     box.append(panel);
   }
 }
 
+/**
+ * Up to six card backs, and a +N beside them for any more. The fan sits in
+ * the middle column of a three-column row, so it stays centred whether or
+ * not the +N is showing.
+ */
+function fanOfBacks(count, fanClass, moreClass) {
+  const row = document.createElement('div');
+  row.className = 'hand-row';
+
+  const fan = document.createElement('div');
+  fan.className = fanClass;
+  for (let i = 0; i < Math.min(count, FAN_LIMIT); i++) fan.append(cardEl(null, { faceDown: true }));
+
+  const more = document.createElement('span');
+  more.className = moreClass;
+  more.textContent = count > FAN_LIMIT ? `+${count - FAN_LIMIT}` : '';
+
+  row.append(document.createElement('span'), fan, more);
+  return row;
+}
+
 function renderStock() {
-  // Cards already drawn stay counted here until they actually leave the pile.
+  // Cards already drawn stay here until they actually leave.
   const inStock = state.deck.length + departing.size;
   const trumpShowing = state.deck.length > 0 || departing.has(cardId(state.trumpCard));
 
+  // The trump card is the last card of the stock, turned face up and stood
+  // above the rest, so the suit that matters is readable all game.
   const trumpBox = $('#trump-card');
   clear(trumpBox);
   if (trumpShowing) trumpBox.append(cardEl(state.trumpCard, { trump: state.trump }));
 
-  // Once the stock is gone, so is the turned-up trump card. The empty pile
-  // shows the trump suit in its place, so it is never lost in the endgame.
+  // The rest of the stock as a fan of up to six, with +N below for the others.
+  const backs = inStock - (trumpShowing ? 1 : 0);
   const pile = $('#deck-pile');
+  clear(pile);
+  for (let i = 0; i < Math.min(backs, FAN_LIMIT); i++) pile.append(cardEl(null, { faceDown: true }));
+  setText($('#deck-more'), backs > FAN_LIMIT ? `+${backs - FAN_LIMIT}` : '');
+
+  // Once the stock is gone, so is the trump card. An empty place shows the
+  // trump suit instead, so it is never lost in the endgame.
   const empty = inStock === 0;
-  pile.dataset.empty = String(empty);
-  pile.classList.toggle('is-red', empty && (state.trump === 'H' || state.trump === 'D'));
-  pile.title = empty ? `Trump: ${SUIT_NAME[state.trump]}` : '';
-  setText($('#deck-count'), empty ? SUIT_GLYPH[state.trump] : String(inStock));
+  const spot = $('#deck-empty');
+  show(spot, empty);
+  show(trumpBox, !empty);
+  show(pile, !empty);
+  setText(spot, SUIT_GLYPH[state.trump]);
+  spot.classList.toggle('is-red', state.trump === 'H' || state.trump === 'D');
+  spot.title = `Trump: ${SUIT_NAME[state.trump]}`;
 
   // The beaten pile keeps its place from the start, so there is always
   // somewhere visible for a beaten table to go — and it counts cards as they
@@ -1251,18 +1283,20 @@ function renderSlots() {
   });
 }
 
-function renderHand() {
+function renderHand({ arrivals = null } = {}) {
   const box = $('#my-hand');
+  const before = cardBoxes(box);
   clear(box);
 
   const live = !dealing && !state.finished && !state.out[mySeat];
   const attacks = live ? legalAttacks(state, mySeat) : [];
   const defending = live && mySeat === state.defender && !state.taking;
 
-  // Every card, in sorted order. One still flying in is already in its place
-  // but invisible, so it has an exact spot to land on and the hand makes
-  // room for it rather than reshuffling when it arrives.
-  const hand = [...state.hands[mySeat]].sort(byTrumpThenRank);
+  // Only cards that have arrived. One still in the air is added when it lands,
+  // and the hand makes room for it then (see landed()).
+  const hand = state.hands[mySeat]
+    .filter((card) => !landing.has(cardId(card)))
+    .sort(byTrumpThenRank);
 
   for (const card of hand) {
     const canAttack = attacks.some((c) => sameCard(c, card));
@@ -1276,7 +1310,6 @@ function renderHand() {
     const playable = canAttack || openFor.length > 0;
 
     const el = cardEl(card, { interactive: true, trump: state.trump });
-    el.classList.toggle('is-landing', landing.has(cardId(card)));
     el.disabled = !playable;
     el.classList.toggle('card--dim', !playable);
     el.classList.toggle('is-playable', playable);
@@ -1296,6 +1329,51 @@ function renderHand() {
     }
 
     box.append(el);
+  }
+
+  settleHand(box, before, arrivals);
+}
+
+/** Where each card in a fan currently shows, by card id, as centre and width. */
+function cardBoxes(fan) {
+  const boxes = new Map();
+  if (reducedMotion()) return boxes;
+  for (const el of fan.children) {
+    if (!el.dataset.card) continue;
+    const r = el.getBoundingClientRect();
+    boxes.set(el.dataset.card, { cx: r.left + r.width / 2, cy: r.top + r.height / 2, w: r.width });
+  }
+  return boxes;
+}
+
+/**
+ * Slide your cards from where they were to where they now are, so a card
+ * leaving or arriving pushes the others aside instead of making them jump.
+ * An arriving card starts from where its copy landed and grows into place.
+ */
+function settleHand(fan, before, arrivals) {
+  if (reducedMotion() || (before.size === 0 && !arrivals)) return;
+  for (const el of fan.children) {
+    const id = el.dataset.card;
+    const arrival = arrivals?.get(id);
+    const from = arrival ?? before.get(id);
+    if (!from) continue;
+
+    const r = el.getBoundingClientRect();
+    const dx = from.cx - (r.left + r.width / 2);
+    let dy = from.cy - (r.top + r.height / 2);
+    // A card lifted by hover or selection is not a move; only a change of row is.
+    if (!arrival && Math.abs(dy) < 24) dy = 0;
+    const scale = from.w && r.width ? from.w / r.width : 1;
+    if (Math.abs(dx) < 0.5 && Math.abs(dy) < 0.5 && Math.abs(scale - 1) < 0.01) continue;
+
+    el.animate(
+      [
+        { transform: `translate(${dx}px, ${dy}px) scale(${scale})` },
+        { transform: 'translate(0, 0) scale(1)' },
+      ],
+      { duration: SETTLE_MS, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)' }
+    );
   }
 }
 

@@ -2,10 +2,10 @@
  * Card movement.
  *
  * Every flight animates a *copy* of a card in a fixed overlay above the page,
- * never the real element. The table re-renders the instant a move lands; the
- * real card sits invisible in its new place (game.js marks it `is-landing`)
- * while its copy travels there, and the copy is swapped for the real card on
- * the same frame it arrives.
+ * never the real element. The table re-renders the instant a move lands, and
+ * game.js holds the real card back while its copy travels: invisible in its
+ * slot on the table, or left out of a hand until it arrives. The copy is
+ * swapped for the real card on the same frame it lands.
  *
  * A flight's destination is looked up again on every frame rather than
  * measured once. Hands re-sort and the table re-centres whenever anyone plays,
@@ -25,6 +25,8 @@ export const FLIGHT_MS = {
   collect: 420,  // table to a hand
   draw: 360,     // stock to a hand
 };
+/** How long your hand takes to make room for a card, or close up after one. */
+export const SETTLE_MS = 220;
 /** Gap between table cards leaving together, and between cards drawn in turn. */
 export const CLEAR_GAP_MS = 55;
 export const DRAW_GAP_MS = 85;
@@ -92,7 +94,7 @@ const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
  *   flip      'up' turns a back face-up on the way, 'down' turns a face over
  *   delay     ms before launching; the card stays where it is until then
  *   onLaunch  called as the card leaves (after `from` has been read)
- *   onLand    called on the frame the card arrives
+ *   onLand    called on the frame the card arrives, with the box it landed in
  *   onCancel  called if the flight is replaced or cleared before it lands
  *
  * Returns false when motion is reduced, so the caller knows nothing will land.
@@ -231,7 +233,7 @@ function tick(now) {
   for (const flight of landed) {
     if (flights.get(flight.key) !== flight) continue;
     drop(flight);
-    flight.onLand?.();
+    flight.onLand?.(flight.current ?? resolve(flight.to));
   }
 
   if (flights.size > 0 && !frame) frame = requestAnimationFrame(tick);
