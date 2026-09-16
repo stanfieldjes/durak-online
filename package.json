@@ -2,7 +2,7 @@
   "name": "durak-online",
   "version": "1.0.0",
   "private": true,
-  "description": "Two-player Durak with an Elo ladder, served as a static site.",
+  "description": "Durak, online.",
   "type": "module",
   "scripts": {
     "build": "python3 build.py",

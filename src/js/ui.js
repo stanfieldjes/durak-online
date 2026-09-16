@@ -53,6 +53,8 @@ export function cardEl(card, { interactive = false, trump = null, faceDown = fal
 
   el.append(rank, suit);
   el.setAttribute('aria-label', `${spellRank(card.r)} of ${SUIT_NAME[card.s]}`);
+  // Lets card movement find this exact card again after a re-render.
+  el.dataset.card = card.r + card.s;
   return el;
 }
 

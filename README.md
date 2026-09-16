@@ -212,7 +212,7 @@ config.json              site + Supabase settings (safe to commit)
 src/templates/           base.html and the view partials
 src/styles/main.css
 src/js/durak.js          rules engine — pure, no DOM, no network
-src/js/fx.js             card movement and dealing, animated as clones
+src/js/fx.js             card movement, animated as copies that follow each card
 src/js/sound.js          sound effects, pooled and mutable
 src/audio/               the clips themselves
 src/js/score.js          score model, mirrored by public.score()
@@ -236,6 +236,21 @@ monthly active users, and 200 concurrent realtime connections, far more than a
 friend group will use. The one thing to watch is that Supabase pauses free
 projects after a week with no activity; opening the dashboard wakes it up.
 
+## Card movement
+
+Cards only ever travel four ways: stock to hand, hand to table, table to a
+hand, and table to the beaten pile. `planMoves()` in `game.js` works out which
+journeys to draw by comparing where every card is in the position on screen
+with where it is in the new one, rather than by reading the log, so the
+animation cannot disagree with the game: beaten cards can only fly to the
+pile, because that is where the state put them.
+
+The new position still renders at once. A card that is on its way sits in its
+real place but invisible (`is-landing`) until its copy arrives, the stock
+counts down as cards leave it, and the beaten pile counts up as they land.
+Timings are the `FLIGHT_MS` constants at the top of `fx.js`. With reduced
+motion turned on, cards simply appear where they belong.
+
 ## Sound
 
 Five short clips in `src/audio/`, played from `src/js/sound.js`: the game
@@ -246,7 +261,8 @@ enough together that one element cannot overlap itself.
 There is deliberately no per-card sound while dealing or drawing. The gathering
 slide already covers those moments, and a clip firing once per card turned into
 a rattle. To bring one back, add it to `CLIPS` in `sound.js` and call it from
-`runEffects` in `game.js`.
+`playEventSounds` in `game.js` (the card sound itself plays from
+`planMoves`, as each card lands on the table).
 
 Browsers refuse to play anything until the person has interacted with the page,
 so the first click is used to prime the clips rather than to play them. The

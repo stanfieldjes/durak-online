@@ -561,6 +561,14 @@ a.btn { display: inline-block; text-decoration: none; }
 /* Angled the other way and warmer, so the two piles never read as the same. */
 .pile--discard { background: repeating-linear-gradient(-45deg, #2a1416 0 6px, #1c0e10 6px 12px); }
 
+/* Before anything is beaten the pile is an empty place on the felt, the same
+   way the stock looks once it runs out, so beaten cards always have a
+   visible destination. */
+.pile--discard[data-empty="true"] {
+  background: rgba(0, 0, 0, 0.25);
+  border-style: dashed;
+}
+
 .pile__label { font-size: var(--step--1); color: var(--chalk-dim); }
 
 /*
@@ -803,12 +811,28 @@ button.card.is-selected {
 
 .fx-piece {
   position: fixed;
+  left: 0;
+  top: 0;
+  width: var(--card-w);
+  height: var(--card-h);
   margin: 0;
   pointer-events: none;
-  will-change: transform, opacity;
+  transform-origin: 50% 50%;
+  will-change: transform;
+  filter: drop-shadow(0 6px 9px rgba(0, 0, 0, 0.45));
 }
 
-/* ---------- clearing the table ---------- */
+.fx-piece > .card {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  transition: none;
+}
+
+/* A card whose copy is still flying to this spot. It keeps its space, so the
+   copy has an exact place to land, but is not seen or clickable until then. */
+.is-landing { visibility: hidden; pointer-events: none; }
 
 /* ---------- result ---------- */
 
