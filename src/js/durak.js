@@ -196,10 +196,17 @@ export function openSlots(state) {
   return state.table.filter((s) => !s.def).length;
 }
 
-/** How many more cards may go down right now, across all attackers. */
+/**
+ * How many more cards may go down right now, across all attackers.
+ *
+ * While the defender is defending, never more than they could answer: each
+ * open attack needs a card from their hand. Once they are taking there is
+ * nothing to answer, so attackers may throw in freely up to the six-card
+ * table limit, however few cards the defender holds.
+ */
 export function attackCapacity(state) {
   const room = MAX_SLOTS - state.table.length;
-  // Never put down more than the defender could answer.
+  if (state.taking) return Math.max(0, room);
   const defenderRoom = state.hands[state.defender].length - openSlots(state);
   return Math.max(0, Math.min(room, defenderRoom));
 }

@@ -400,10 +400,15 @@ begin
     select count(*) into open_len
       from jsonb_array_elements(row.state->'table') slot
      where coalesce(jsonb_typeof(slot->'def'), 'null') = 'null';
-    room := least(
-      6 - table_len,
-      coalesce(jsonb_array_length(row.state->'hands'->defender), 0) - open_len
-    );
+    -- While defending, the defender's hand limits the table; once taking,
+    -- only the six-card limit does. Mirrors attackCapacity() in durak.js.
+    room := case
+      when coalesce((row.state->>'taking')::boolean, false) then 6 - table_len
+      else least(
+        6 - table_len,
+        coalesce(jsonb_array_length(row.state->'hands'->defender), 0) - open_len
+      )
+    end;
     delay_ms := case when room <= 0 then row.quick_clear_delay_ms else row.clear_delay_ms end;
     if now() < row.updated_at + delay_ms * interval '1 millisecond' then
       raise exception 'too early to clear the table';

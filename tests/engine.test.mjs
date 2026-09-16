@@ -192,6 +192,7 @@ console.log('Checking free-for-all throw-ins...');
 /* ---- capacity --------------------------------------------------------- */
 
 console.log('Checking the table never exceeds what the defender can answer...');
+let takesPastHand = 0;
 for (let g = 0; g < 300; g++) {
   const rng = makeRng(g + 500);
   let state = newGame(g, 4);
@@ -199,10 +200,15 @@ for (let g = 0; g < 300; g++) {
   while (!state.finished && guard++ < 3000) {
     const openSlots = state.table.filter((t) => !t.def).length;
     const cap = attackCapacity(state);
-    if (cap > state.hands[state.defender].length - openSlots) {
+    if (!state.taking && cap > state.hands[state.defender].length - openSlots) {
       fail(`game ${g}: capacity ${cap} exceeds what the defender can answer`);
       break;
     }
+    if (state.taking && cap !== Math.max(0, 6 - state.table.length)) {
+      fail(`game ${g}: during a take, capacity ${cap} is not simply the room left on the table`);
+      break;
+    }
+    if (state.taking && openSlots > state.hands[state.defender].length) takesPastHand++;
     if (state.table.length + cap > 6) {
       fail(`game ${g}: capacity would push the table past six slots`);
       break;
@@ -216,6 +222,33 @@ for (let g = 0; g < 300; g++) {
 }
 
 /* ---- elimination ------------------------------------------------------ */
+
+check('random play reaches takes with more open cards than the defender holds', takesPastHand > 0);
+
+console.log('Checking throw-ins during a take ignore the defender\'s hand size...');
+{
+  let s = newGame(3, 2);
+  s = { ...s, trump: 'S', attacker: 0, defender: 1, taking: false, out: [false, false], passed: [false, true] };
+  s.hands[0] = [{ r: '6', s: 'D' }, { r: '6', s: 'H' }, { r: '6', s: 'S' }, { r: '7', s: 'H' }, { r: '7', s: 'S' }];
+  s.hands[1] = [{ r: 'A', s: 'H' }]; // one card left, one open attack
+  s.table = [
+    { atk: { r: '6', s: 'C' }, def: { r: '7', s: 'C' } },
+    { atk: { r: '7', s: 'D' }, def: null },
+  ];
+  check('while defending: no room past the defender\'s hand', attackCapacity(s) === 0 && legalAttacks(s, 0).length === 0);
+
+  let t = applyMove(s, 1, { type: 'take' });
+  check('once taking: room up to six on the table', attackCapacity(t) === 4);
+  check('once taking: every matching card may be thrown in', legalAttacks(t, 0).length === 5);
+  for (const card of [{ r: '6', s: 'D' }, { r: '6', s: 'H' }, { r: '7', s: 'H' }, { r: '6', s: 'S' }]) {
+    t = applyMove(t, 0, { type: 'attack', card });
+  }
+  check('four throw-ins land on a one-card defender', t.table.length === 6 && t.taking && !t.finished);
+  check('the six-card limit still holds', attackCapacity(t) === 0 && legalAttacks(t, 0).length === 0);
+  check('a full take is a quick clear with no Done', isQuickClear(t) && !canPass(t, 0));
+  const done = applyMove(t, 0, { type: 'clear' });
+  check('the defender picks up all twelve cards', done.hands[1].length === 1 + 6 + 1 && done.table.length === 0);
+}
 
 console.log('Checking elimination and the last player standing...');
 for (const players of [3, 4]) {
