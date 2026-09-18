@@ -67,6 +67,38 @@ create index if not exists games_status_created_idx
   on public.games (status, created_at desc);
 create index if not exists games_host_idx on public.games (host_id);
 
+-- Tables seat up to eight. `create table if not exists` above leaves an
+-- existing games table alone, so a database created when the limit was four
+-- keeps the old default and check until this runs. Safe to run repeatedly:
+-- it drops whatever check is on max_players, whatever it was named, and puts
+-- the current one back.
+do $$
+declare
+  con_name text;
+begin
+  for con_name in
+    select con.conname
+      from pg_constraint con
+      join pg_class rel on rel.oid = con.conrelid
+      join pg_namespace ns on ns.oid = rel.relnamespace
+     where ns.nspname = 'public'
+       and rel.relname = 'games'
+       and con.contype = 'c'
+       and pg_get_constraintdef(con.oid) ilike '%max_players%'
+  loop
+    execute format('alter table public.games drop constraint %I', con_name);
+  end loop;
+end
+$$;
+
+alter table public.games
+  add constraint games_max_players_check check (max_players between 2 and 8);
+alter table public.games alter column max_players set default 8;
+
+-- Tables still waiting for players were opened under the old limit.
+update public.games set max_players = 8
+ where status = 'waiting' and max_players < 8;
+
 -- One row per seat. Seats are numbered from 0 and match the engine's arrays.
 create table if not exists public.game_players (
   game_id   uuid not null references public.games(id) on delete cascade,
