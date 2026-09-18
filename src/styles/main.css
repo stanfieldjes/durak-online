@@ -409,6 +409,8 @@ a.btn { display: inline-block; text-decoration: none; }
   width: min(100%, calc(62.5rem * var(--table-scale)));
   margin-inline: auto;
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "bar" "top" "middle" "bottom";
   gap: clamp(0.75rem, 2.5vw, 1.5rem);
   padding: clamp(0.75rem, 2.5vw, 1.5rem);
   border-radius: 14px;
@@ -439,6 +441,23 @@ a.btn { display: inline-block; text-decoration: none; }
 .felt.is-resizing .felt__grip { color: #fff; }
 
 .felt.is-resizing { user-select: none; }
+
+/* With more opponents than fit across the top, the rest run down the right of
+   the table, beside the stock and the slots. */
+.felt--wrapped {
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "bar bar"
+    "top top"
+    "middle side"
+    "bottom bottom";
+}
+
+.felt__bar { grid-area: bar; }
+.opponents--top { grid-area: top; }
+.felt__middle { grid-area: middle; }
+.opponents--side { grid-area: side; }
+.felt__bottom { grid-area: bottom; }
 
 .felt__bar {
   display: flex;
@@ -531,21 +550,21 @@ a.btn { display: inline-block; text-decoration: none; }
 .btn--corner:hover { color: #fff; background: rgba(0, 0, 0, 0.25); }
 
 /* All opponents sit in one row across the top, with your own hand below. */
-.opponents {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
-  gap: 0.75rem;
-  align-items: start;
+/* Opponents sit in a row across the top, in seat order from your left.
+   --seats is however many are up there (game.js sets it), so they share the
+   width evenly. */
+.opponents { display: grid; gap: 0.75rem; align-items: start; }
+
+.opponents--top { grid-template-columns: repeat(var(--seats, 1), minmax(0, 1fr)); }
+
+/* The overflow column down the right: narrower panels, so the middle of the
+   table keeps most of the width. */
+.opponents--side {
+  width: calc(var(--card-base) * 3.1);
+  align-content: start;
 }
 
-.player { grid-column: 2; }
-
-.opponents[data-count="2"] > .player:nth-child(1) { grid-column: 1; }
-.opponents[data-count="2"] > .player:nth-child(2) { grid-column: 3; }
-
-.opponents[data-count="3"] > .player:nth-child(1) { grid-column: 1; grid-row: 2; }
-.opponents[data-count="3"] > .player:nth-child(2) { grid-column: 2; grid-row: 1; }
-.opponents[data-count="3"] > .player:nth-child(3) { grid-column: 3; grid-row: 2; }
+.opponents--side:empty { display: none; }
 
 .player {
   /* Opponents' cards size themselves to this panel (see .fan--opponent). */
@@ -1184,9 +1203,13 @@ button.card.is-selected {
   :root { --card-base: clamp(40px, 11vw, 60px); }
   .felt { width: 100%; }
   .felt__grip { display: none; }
-  .opponents { grid-template-columns: 1fr 1fr; }
-  /* The desktop placements use three columns; on two, let panels flow. */
-  .opponents > .player { grid-column: auto !important; grid-row: auto !important; }
+  /* No room for a column beside the table: the overflow goes below it. */
+  .felt--wrapped {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "bar" "top" "middle" "side" "bottom";
+  }
+  .opponents--top { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .opponents--side { width: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .player__role { margin-left: 0; width: 100%; }
 }
 

@@ -13,6 +13,7 @@ import {
   seatsToAct,
   cardId,
   IllegalMove,
+  deckSize,
 } from '../src/js/durak.js';
 import {
   computeScore,
@@ -157,8 +158,9 @@ console.log('Checking that simultaneous moves cannot lose a card...');
       }
 
       const now = server.read();
-      if (countCards(now) !== 36) {
-        fail(`game ${g}: ${countCards(now)} cards after concurrent writes, expected 36`);
+      if (countCards(now) !== deckSize(now.playerCount)) {
+        fail(`game ${g}: ${countCards(now)} cards after concurrent writes, ` +
+          `expected ${deckSize(now.playerCount)}`);
         break;
       }
     }
@@ -173,7 +175,7 @@ console.log('Checking that simultaneous moves cannot lose a card...');
 // join_game() trusts the last player to deal from the stored seed.
 console.log('Checking deals are reproducible from the seed...');
 for (const seed of [0, 1, 42, 999, 2147483645]) {
-  for (const players of [2, 3, 4]) {
+  for (const players of [2, 3, 4, 5, 6, 7, 8]) {
     const a = JSON.stringify(newGame(seed, players));
     const b = JSON.stringify(newGame(seed, players));
     if (a !== b) fail(`seed ${seed} at ${players}p dealt two different games`);

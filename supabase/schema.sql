@@ -49,7 +49,7 @@ create table if not exists public.games (
   status       text not null default 'waiting'
                check (status in ('waiting', 'active', 'finished', 'abandoned')),
   host_id      uuid not null references public.profiles(id) on delete cascade,
-  max_players  int  not null default 4 check (max_players between 2 and 4),
+  max_players  int  not null default 8 check (max_players between 2 and 8),
   seed         bigint not null,
   state        jsonb,
   version      int  not null default 0,   -- mirrors state->>'version'
@@ -173,7 +173,7 @@ revoke all on function public.nudge_lobby(uuid) from public, anon, authenticated
 -- Always four seats. The parameter stays so a browser still running the old
 -- page can call it, but whatever it asks for, the table seats four; the host
 -- can start early once two people are seated.
-create or replace function public.create_game(p_max_players int default 4)
+create or replace function public.create_game(p_max_players int default 8)
 returns public.games
 language plpgsql security definer set search_path = public
 as $$
@@ -188,6 +188,9 @@ begin
   if not exists (select 1 from profiles where id = me) then
     raise exception 'finish creating your profile first';
   end if;
+  if p_max_players < 2 or p_max_players > 8 then
+    raise exception 'a table seats between two and eight players';
+  end if;
 
   -- One open table per host: opening a new one closes the old.
   for stale_id in
@@ -199,7 +202,7 @@ begin
   end loop;
 
   insert into games (host_id, max_players, seed)
-  values (me, 4, floor(random() * 2147483646)::bigint)
+  values (me, p_max_players, floor(random() * 2147483646)::bigint)
   returning * into row;
 
   insert into game_players (game_id, seat, player_id) values (row.id, 0, me);

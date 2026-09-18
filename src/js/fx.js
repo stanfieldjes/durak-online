@@ -31,6 +31,8 @@ export const SETTLE_MS = 220;
 export const CLEAR_GAP_MS = 55;
 export const DRAW_GAP_MS = 85;
 export const DEAL_GAP_MS = 90;
+/** Roughly how long a whole deal should take, however many are playing. */
+export const DEAL_TOTAL_MS = 2200;
 
 let layer = null;
 let frame = 0;

@@ -1,4 +1,5 @@
 import { supabase } from './supabase.js';
+import { MAX_PLAYERS } from './durak.js';
 
 /* ---------------- profiles ---------------- */
 
@@ -50,9 +51,9 @@ function withSortedSeats(game) {
   return { ...game, players: [...game.players].sort((a, b) => a.seat - b.seat) };
 }
 
-/** Open a table. Every table seats four; the host can start once two are seated. */
+/** Open a table. Every table seats eight; the host can start once two are seated. */
 export async function createGame() {
-  const { data, error } = await supabase.rpc('create_game', { p_max_players: 4 });
+  const { data, error } = await supabase.rpc('create_game', { p_max_players: MAX_PLAYERS });
   if (error) throw error;
   return data;
 }

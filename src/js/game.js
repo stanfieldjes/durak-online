@@ -46,6 +46,7 @@ import {
   CLEAR_GAP_MS,
   DRAW_GAP_MS,
   DEAL_GAP_MS,
+  DEAL_TOTAL_MS,
 } from './fx.js';
 import { play as playSound, getVolume, setVolume, setSoundActive } from './sound.js';
 import { initTableSize, tableShown, tableHidden } from './tablesize.js';
@@ -143,6 +144,12 @@ let quietPartsQueued = false;
 
 /** Most card backs an opponent's fan shows before counting the rest as +N. */
 const FAN_LIMIT = 6;
+/**
+ * How many opponents sit across the top of the table. On a big table the rest
+ * carry on down the right-hand side, in seat order, so the row reads round
+ * the table from your left.
+ */
+const TOP_ROW_SEATS = 4;
 
 export function initGame() {
   initTableSize($('#felt'), $('#table-grip'));
@@ -663,6 +670,10 @@ function planDeal(next) {
 
   const flights = [];
   let k = 0;
+  // A big table deals four dozen cards, so the gap between them closes up to
+  // keep the whole deal about as long as a small table's.
+  const cards = next.playerCount * HAND_SIZE;
+  const gap = Math.min(DEAL_GAP_MS, Math.round(DEAL_TOTAL_MS / cards));
   // hands[seat][round] is exactly the card dealt to that seat in that round
   // — newGame() deals one card per seat per round.
   for (let round = 0; round < HAND_SIZE; round++) {
@@ -670,7 +681,7 @@ function planDeal(next) {
       const card = next.hands[seat][round];
       if (!card) continue;
       dealt.add(cardId(card));
-      flights.push(drawFlight(card, seat, next.trumpCard, k * DEAL_GAP_MS));
+      flights.push(drawFlight(card, seat, next.trumpCard, k * gap));
       k++;
     }
   }
@@ -1144,56 +1155,67 @@ function renderWaiting() {
 }
 
 function renderOpponents() {
-  const box = $('#opponents');
-  clear(box);
+  const top = $('#opponents');
+  const side = $('#opponents-side');
+  clear(top);
+  clear(side);
 
+  // Seat order starting with the player to your left: along the top, then
+  // down the right-hand side once the top row is full.
   const order = [];
   for (let i = 1; i < state.playerCount; i++) order.push((mySeat + i) % state.playerCount);
-  box.dataset.count = String(order.length);
+  const acrossTop = Math.min(order.length, TOP_ROW_SEATS);
+  top.style.setProperty('--seats', String(Math.max(acrossTop, 1)));
+  $('#felt').classList.toggle('felt--wrapped', order.length > acrossTop);
 
-  for (const seat of order) {
-    const profile = profileAt(seat);
-    const panel = document.createElement('div');
-    panel.className = 'player';
-    panel.dataset.seat = String(seat);
-    if (seat === state.defender) panel.classList.add('player--defending');
-    if (seat === state.attacker) panel.classList.add('player--attacking');
-    if (seat === state.defender && state.taking) panel.classList.add('player--taking');
-    if (state.out[seat]) panel.classList.add('player--out');
-    if (canAct(state, seat)) panel.classList.add('player--acting');
+  order.forEach((seat, i) => {
+    (i < acrossTop ? top : side).append(opponentPanel(seat));
+  });
+}
 
-    const head = document.createElement('div');
-    head.className = 'player__head';
+/** One opponent's panel: who they are, what they are doing, and their cards. */
+function opponentPanel(seat) {
+  const profile = profileAt(seat);
+  const panel = document.createElement('div');
+  panel.className = 'player';
+  panel.dataset.seat = String(seat);
+  if (seat === state.defender) panel.classList.add('player--defending');
+  if (seat === state.attacker) panel.classList.add('player--attacking');
+  if (seat === state.defender && state.taking) panel.classList.add('player--taking');
+  if (state.out[seat]) panel.classList.add('player--out');
+  if (canAct(state, seat)) panel.classList.add('player--acting');
 
-    const name = document.createElement('span');
-    name.className = 'player__name';
-    name.textContent = profile?.username ?? `Seat ${seat + 1}`;
+  const head = document.createElement('div');
+  head.className = 'player__head';
 
-    const rating = document.createElement('span');
-    rating.className = 'player__rating';
-    paintScore(rating, scoreOf(profile));
+  const name = document.createElement('span');
+  name.className = 'player__name';
+  name.textContent = profile?.username ?? `Seat ${seat + 1}`;
 
-    const role = document.createElement('span');
-    role.className = 'player__role';
-    role.textContent = state.out[seat]
-      ? 'out'
-      : state.passed[seat] && seat !== state.defender
-        ? 'done'
-        : roleOf(state, seat);
+  const rating = document.createElement('span');
+  rating.className = 'player__rating';
+  paintScore(rating, scoreOf(profile));
 
-    head.append(name, rating, role);
+  const role = document.createElement('span');
+  role.className = 'player__role';
+  role.textContent = state.out[seat]
+    ? 'out'
+    : state.passed[seat] && seat !== state.defender
+      ? 'done'
+      : roleOf(state, seat);
 
-    // Only cards that have arrived count; one still in the air joins when it lands.
-    const hand = state.hands[seat];
-    const count = hand.length - hand.filter((card) => landing.has(cardId(card))).length;
+  head.append(name, rating, role);
 
-    const tally = document.createElement('span');
-    tally.className = 'player__count';
-    tally.textContent = dealing && count === 0 ? '' : count === 1 ? '1 card' : `${count} cards`;
+  // Only cards that have arrived count; one still in the air joins when it lands.
+  const hand = state.hands[seat];
+  const count = hand.length - hand.filter((card) => landing.has(cardId(card))).length;
 
-    panel.append(head, fanOfBacks(count, 'fan fan--opponent', 'player__more'), tally);
-    box.append(panel);
-  }
+  const tally = document.createElement('span');
+  tally.className = 'player__count';
+  tally.textContent = dealing && count === 0 ? '' : count === 1 ? '1 card' : `${count} cards`;
+
+  panel.append(head, fanOfBacks(count, 'fan fan--opponent', 'player__more'), tally);
+  return panel;
 }
 
 /**

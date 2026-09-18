@@ -36,11 +36,24 @@
  */
 
 export const SUITS = ['S', 'H', 'D', 'C'];
-export const RANKS = ['6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+/**
+ * Every rank there can be, lowest first. A table of four or fewer plays the
+ * usual 36-card deck, from sixes up. Each seat past the fourth adds the next
+ * rank down — fives at five players, fours at six, and so on to a full
+ * 52-card deck at eight — so there are always six cards a head to deal plus a
+ * stock to draw from.
+ */
+export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
+/** The lowest rank in a four-player deck; smaller tables use this one too. */
+const BASE_RANK = '6';
 export const HAND_SIZE = 6;
 export const MAX_SLOTS = 6;
 export const MIN_PLAYERS = 2;
-export const MAX_PLAYERS = 4;
+export const MAX_PLAYERS = 8;
+/** Nobody is dealt more than this many cards of one suit (see newGame). */
+export const MAX_SUIT_IN_DEAL = 4;
+/** How many reshuffles to try for that before dealing what comes up. */
+const DEAL_ATTEMPTS = 200;
 
 export const SUIT_GLYPH = { S: '\u2660', H: '\u2665', D: '\u2666', C: '\u2663' };
 export const SUIT_NAME = { S: 'spades', H: 'hearts', D: 'diamonds', C: 'clubs' };
@@ -80,9 +93,21 @@ export function makeRng(seed) {
   };
 }
 
-export function createDeck(rng) {
+/** The ranks a table of `playerCount` plays with, lowest first. */
+export function ranksFor(playerCount) {
+  const extra = Math.min(Math.max(playerCount - 4, 0), RANKS.indexOf(BASE_RANK));
+  return RANKS.slice(RANKS.indexOf(BASE_RANK) - extra);
+}
+
+/** How many cards that table's deck holds: 36 up to four players, 52 at eight. */
+export function deckSize(playerCount) {
+  return ranksFor(playerCount).length * SUITS.length;
+}
+
+export function createDeck(rng, playerCount = MIN_PLAYERS) {
+  const ranks = ranksFor(playerCount);
   const deck = [];
-  for (const s of SUITS) for (const r of RANKS) deck.push({ r, s });
+  for (const s of SUITS) for (const r of ranks) deck.push({ r, s });
   for (let i = deck.length - 1; i > 0; i--) {
     const j = Math.floor(rng() * (i + 1));
     [deck[i], deck[j]] = [deck[j], deck[i]];
@@ -104,11 +129,21 @@ export function newGame(seed, playerCount) {
     throw new IllegalMove(`Durak needs ${MIN_PLAYERS} to ${MAX_PLAYERS} players.`);
   }
 
+  // Deal, and reshuffle if anyone catches more than four of a suit: a hand
+  // like that plays badly, and with one suit hoarded the round tends to stall.
+  // The shuffles keep drawing from the same seeded stream, so this is still
+  // the same deal every time for a given seed. On the rare table where no
+  // shuffle satisfies it, the last one is dealt anyway rather than looping.
   const rng = makeRng(seed);
-  const deck = createDeck(rng);
-  const hands = Array.from({ length: n }, () => []);
-  for (let i = 0; i < HAND_SIZE; i++) {
-    for (let seat = 0; seat < n; seat++) hands[seat].push(deck.pop());
+  let deck;
+  let hands;
+  for (let attempt = 1; ; attempt++) {
+    deck = createDeck(rng, n);
+    hands = Array.from({ length: n }, () => []);
+    for (let i = 0; i < HAND_SIZE; i++) {
+      for (let seat = 0; seat < n; seat++) hands[seat].push(deck.pop());
+    }
+    if (attempt >= DEAL_ATTEMPTS || hands.every(wellSpread)) break;
   }
 
   const trumpCard = deck[0];
@@ -139,6 +174,17 @@ export function newGame(seed, playerCount) {
 
   refreshPasses(state);
   return state;
+}
+
+/** No more than MAX_SUIT_IN_DEAL cards of any one suit. */
+function wellSpread(hand) {
+  const bySuit = new Map();
+  for (const card of hand) {
+    const count = (bySuit.get(card.s) ?? 0) + 1;
+    if (count > MAX_SUIT_IN_DEAL) return false;
+    bySuit.set(card.s, count);
+  }
+  return true;
 }
 
 /** Lowest trump opens; seat 0 if nobody holds one. */

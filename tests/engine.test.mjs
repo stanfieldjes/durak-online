@@ -22,6 +22,10 @@ import {
   MAX_SLOTS,
   isHopelessForDefender,
   describe,
+  deckSize,
+  MIN_PLAYERS,
+  MAX_PLAYERS,
+  MAX_SUIT_IN_DEAL,
 } from '../src/js/durak.js';
 
 const GAMES_PER_SIZE = 1200;
@@ -31,7 +35,7 @@ let failures = 0;
 const fail = (msg) => { failures++; console.error('  FAIL: ' + msg); };
 const check = (label, cond) => { if (!cond) fail(label); };
 
-/** All 36 cards must be somewhere, exactly once. */
+/** Every card in that table's deck must be somewhere, exactly once. */
 function auditCards(state, where) {
   const seen = new Map();
   const add = (c) => seen.set(cardId(c), (seen.get(cardId(c)) || 0) + 1);
@@ -39,9 +43,10 @@ function auditCards(state, where) {
   state.hands.forEach((h) => h.forEach(add));
   state.table.forEach((s) => { add(s.atk); if (s.def) add(s.def); });
 
+  const total = deckSize(state.playerCount);
   const inPlay = [...seen.values()].reduce((a, b) => a + b, 0);
-  if (inPlay + state.discard !== 36) {
-    fail(`${where}: ${inPlay} in play + ${state.discard} discarded != 36`);
+  if (inPlay + state.discard !== total) {
+    fail(`${where}: ${inPlay} in play + ${state.discard} discarded != ${total}`);
     return false;
   }
   for (const [id, n] of seen) {
@@ -78,7 +83,7 @@ function auditInvariants(state, where) {
 
 /* ---- random playouts -------------------------------------------------- */
 
-for (const players of [2, 3, 4]) {
+for (const players of [2, 3, 4, 6, 8]) {
   console.log(`Running ${GAMES_PER_SIZE} random playouts with ${players} players...`);
   const outcomes = new Array(players).fill(0);
   let draws = 0;
@@ -395,7 +400,7 @@ console.log('Checking that defending the last card ends the game without a pass 
   // is empty, and the OTHER player still holds cards. Nobody has to click
   // anything: the table waits for the automatic clear. The attacker may press
   // Done to skip the pause, and either way ends the game the same.
-  for (const players of [2, 3, 4]) {
+  for (const players of [2, 3, 4, 6, 8]) {
     let s = newGame(2, players);
     s = { ...s, deck: [], table: [], discard: 30 };
     s.attacker = 1; s.defender = 0; s.trump = 'S';
@@ -570,7 +575,7 @@ console.log('Checking when Done is offered...');
 
 console.log('Checking prompts never claim a beaten table when nothing was played...');
 {
-  for (const players of [2, 3, 4]) {
+  for (const players of [2, 3, 4, 6, 8]) {
     const s = newGame(7, players);
     const text = describe(s, s.defender);
     check(`${players}p: defender before the attack is told to wait ("${text}")`,
@@ -602,7 +607,7 @@ console.log('Checking forced endings...');
 {
   let forced = 0;
   let draws = 0;
-  for (const players of [2, 3, 4]) {
+  for (const players of [2, 3, 4, 6, 8]) {
     for (let g = 0; g < 800; g++) {
       const rng = makeRng(g * 31 + players);
       let state = newGame(g, players);
@@ -653,16 +658,35 @@ for (const [def, atk, want, label] of [
 
 /* ---- table sizes ------------------------------------------------------ */
 
-for (const bad of [1, 5, 0, 2.5]) {
+for (const bad of [1, 9, 0, 2.5]) {
   let threw = false;
   try { newGame(1, bad); } catch { threw = true; }
   check(`a table of ${bad} should be refused`, threw);
 }
-for (const good of [2, 3, 4]) {
+for (const good of [2, 3, 4, 5, 6, 7, 8]) {
   const s = newGame(1, good);
+  const size = deckSize(good);
   check(`a table of ${good} deals ${good} hands`, s.hands.length === good);
   check(`a table of ${good} deals six cards each`, s.hands.every((h) => h.length === 6));
-  check(`a table of ${good} leaves ${36 - good * 6} in the stock`, s.deck.length === 36 - good * 6);
+  check(`a table of ${good} plays with ${size} cards`, size === (good > 4 ? 36 + (good - 4) * 4 : 36));
+  check(`a table of ${good} leaves ${size - good * 6} in the stock`, s.deck.length === size - good * 6);
+}
+
+/* ---- nobody is dealt more than four of a suit ------------------------- */
+console.log('Checking deals spread the suits...');
+{
+  let worst = 0;
+  for (let players = MIN_PLAYERS; players <= MAX_PLAYERS; players++) {
+    for (let seed = 1; seed <= 600; seed++) {
+      for (const hand of newGame(seed, players).hands) {
+        const bySuit = {};
+        for (const card of hand) bySuit[card.s] = (bySuit[card.s] ?? 0) + 1;
+        worst = Math.max(worst, ...Object.values(bySuit));
+      }
+    }
+  }
+  check(`no dealt hand holds more than ${MAX_SUIT_IN_DEAL} of a suit (worst was ${worst})`,
+    worst <= MAX_SUIT_IN_DEAL);
 }
 
 if (failures) {
