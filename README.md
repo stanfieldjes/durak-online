@@ -1,13 +1,13 @@
 # Durak Online
 
-Durak for 2 to 8 players with a score ladder. The front end is static files on
+Durak for 2 to 8 players with a rating ladder. The front end is static files on
 GitHub Pages; Supabase holds accounts, tables, and records. No server to run.
 
 ```
 GitHub Pages  ──►  static HTML/CSS/JS       (build.py generates dist/)
       │
       ▼
-Supabase      ──►  Postgres + auth + realtime
+Supabase      ──►  Postgres + auth + realtime + storage
                    writes go through SECURITY DEFINER functions only
 ```
 
@@ -16,10 +16,10 @@ Supabase      ──►  Postgres + auth + realtime
 **1. Create the Supabase project**
 
 Sign up at supabase.com, create a project, open the SQL editor, paste in all of
-`supabase/schema.sql`, and run it. (If the database already exists, run the
-migrations in `supabase/` in order instead — `schema.sql` will not alter tables
-that already exist.) That creates the tables, the row-level
-security policies, the RPCs, and the realtime publication.
+`supabase/schema.sql`, and run it. That creates the tables, the row-level
+security policies, the RPCs, the rating maths, the avatars bucket, and the
+realtime publication. It is safe to run again: everything in it is either
+`if not exists` or an idempotent alter, and it never touches rows.
 
 In Authentication → Providers, make sure Email is on. For a private game among
 friends, turn *off* "Confirm email" so sign-up works in one step. Leave it on if
@@ -44,11 +44,14 @@ Copy your project URL and **anon** key from Settings → API into `config.json`:
 
 ```bash
 python3 build.py --serve     # http://localhost:8000
-npm test                     # engine, concurrency, and score tests
+npm test                     # engine, concurrency, rating and markup tests
+npm run test:sql             # the schema, against a throwaway Postgres
 ```
 
-`build.py` needs nothing but Python 3.9+. The tests need Node 18+. Neither
-installs anything.
+`build.py` needs nothing but Python 3.9+. The tests need Node 18+. `test:sql`
+additionally needs a local `postgres` binary and is skipped in CI; everything
+it checks about the rating is also checked in `tests/sync.test.mjs`, which
+needs nothing.
 
 **4. Deploy**
 
@@ -148,37 +151,134 @@ read a running game's row. See "Trust model" for what that gives away.
 
 ## Rating
 
-Every game has exactly one durak, so at a table of *n* players your share of
-the blame is *1/n* — half at a two-player table, a third at three, a quarter at
-four, and an eighth at a full table of eight. Add that up across a player's games and you have how often they *should*
-have been the durak. Score is the gap between that and how often they actually
-were, in percentage points:
+Everyone starts at **1000**. A game moves **24 points** between the durak and
+the rest of the table, and nothing else moves them: no bonus for getting out
+early, no allowance for how long you held on.
+
+Durak has exactly one loser, so the natural thing to measure is not credit but
+blame, and every game hands out exactly one unit of it. The durak carries all
+of it and everyone else carries none. What each player was *expected* to carry
+comes from the ratings at the table: a weaker player is likelier to be left
+holding cards, so each seat is weighted by `10^(-rating / 400)` and the weights
+are normalised to sum to one. The change is the gap between the two:
 
 ```
-score = (expected durak rate − actual durak rate) × 100
+delta = -24 × (blame carried − blame expected)
 ```
 
-Seven games — two at two players, one at three, four at four — expects
+At a table where everyone is rated the same, expectation is `1/n` each:
 
-```
-(2 × 1/2  +  1 × 1/3  +  4 × 1/4) / 7  =  2.333 / 7  =  33%
-```
+| Players | Durak | Each survivor |
+|---|---|---|
+| 2 | −12 | +12 |
+| 3 | −16 | +8 |
+| 4 | −18 | +6 |
+| 5 | −19.2 | +4.8 |
+| 6 | −20 | +4 |
+| 7 | −20.57 | +3.43 |
+| 8 | −21 | +3 |
 
-Being the durak 30% of the time then scores **+3**; 48% of the time scores
-**−15**. Positive means being the fool less often than the tables you sat at
-predicted.
+Losing at a bigger table costs more, because the prior against it was longer:
+an eight-handed table only expected you to lose an eighth of the time. Losing
+to players rated below you costs more again, and surviving a table of players
+rated above you pays more. Both sides always sum to zero, so the pool is
+constant — points only ever move between players, never into or out of the
+system.
 
-Bigger tables raise the bar rather than lowering it, since a four-player table
-only expects you to lose a quarter of the time and an eight-player table only
-an eighth. The same 25% actual rate is worth +25 if all your games were
-heads-up, exactly par if they were all four-handed, and −12 if they were all
-eight-handed. Score is a rate, not a total, so playing more games does not
-inflate it — though it does settle down the more you play.
+**Why the changes have decimals.** The penalty has to grow with every extra
+player at the table, and in whole numbers it does not. Round the survivors
+first and hand the durak the remainder, and the durak's loss runs
+`12, 16, 18, 20, 20, 18, 21` from two players to eight: it goes *backwards* at
+seven and stalls between five and six. At a seven-player table each survivor's
+true 3.43 rounds down to 3, six times over, all in the same direction, and
+every one of those roundings lands on the same player — so the durak absorbs
+only 18, less than a five-handed durak pays. So `profiles.rating` is
+`numeric(12,6)` and changes are applied exactly. Rounding is a display concern
+and nothing else.
 
-The database stores only the totals: games won, games lost as the durak, and a
-running sum of each game's 1/n. Score is derived from those on the way out, by
-`public.score()` and the `leaderboard` view, so it can never drift out of step
-with the games behind it. Nothing about a score is ever sent by a client.
+**What you see.** Ratings are shown as whole numbers everywhere — a rating is
+a position on a ladder, and the sixth decimal place is nobody's business.
+Changes are shown to one decimal, trailing `.0` trimmed, so a four-player game
+reads `+6 +6 +6 −18` and a seven-player one reads `+3.4 … −20.6`. That last is
+not exactly balanced, and cannot be: no fixed number of decimal places can
+represent a seventh. One decimal keeps the visible gap under a quarter of a
+point, where whole numbers would be three points out.
+
+**A floor at 100.** A rating never falls below it. This is the one place the
+pool is not zero sum — points are created rather than taken from someone — and
+it exists because a number that keeps falling with nothing to climb back from
+is a worse thing to have on a ladder among friends than a slightly leaky
+invariant. Reaching it from 1000 takes a run of losses no real player will
+have.
+
+**No placement games.** A rating is a running total rather than a rate, so
+playing more can never dilute it and three lucky games cannot put anyone on
+top: at K=24 they are worth about 50 points, which is mid-table. This is the
+whole reason the old percentage-point score was replaced — there, score was
+`(expected durak rate − actual durak rate) × 100`, a rate with games played in
+the denominator, so a newcomer who avoided the durak twice scored +25 and a
+veteran with 300 honest games was dragged toward the mean by the law of large
+numbers. Evidence counted against you.
+
+**Tuning.** `K` is what a game is worth; `SCALE` is how quickly a rating gap
+turns into a lopsided expectation. Raising K makes results move faster but adds
+noise; lowering SCALE makes gaps matter more per game but squeezes the ladder
+into a narrower band. Both live at the top of `src/js/rating.js`, and
+`public.rating_changes()` in `schema.sql` mirrors them — change one and you
+must change the other, or the number the browser shows when a game ends stops
+being the number the database stored. `tests/sync.test.mjs` fails if they drift
+apart.
+
+The database is what applies ratings. `finish_game()` reads every player's
+rating, calls `public.rating_changes()`, and writes the results in one
+transaction, locking the profiles first so two tables finishing at the same
+instant cannot both work from the same stale number. A client never sends a
+rating or any part of one.
+
+## Names
+
+Usernames may be in any script — Дурак and 田中 are names like any other. The
+rule is 3 to 20 characters, no control characters, no padding spaces, and at
+least one character that is not a space or punctuation.
+
+That last test is written as "not space and not punctuation" rather than the
+more obvious `[[:alnum:]]` because Postgres character classes follow the
+database's ctype. Under a UTF-8 locale `[[:alpha:]]` does match Cyrillic and
+CJK, but under the C locale it matches ASCII only — so an alnum test would
+quietly reject every non-English name on a database created that way.
+
+Two names that *look* the same cannot both exist. The unique index is on
+`lower(normalize(username, NFC))`, so `Café` typed with a precomposed é and
+`Café` typed as e plus a combining accent collide instead of sitting next to
+each other on the leaderboard looking identical.
+
+Length is counted in characters, not bytes and not UTF-16 code units, in both
+the browser and the database. A "20 character" limit that quietly means ten
+would be simply wrong to anyone typing in Japanese.
+
+## Profile pictures
+
+Pictures live in a public `avatars` bucket in Supabase Storage, one folder per
+player named with their user id. Anyone may look; you may only write inside
+your own folder, which is what stops one player replacing another's picture.
+Uploads are capped at 2MB and limited to PNG, JPEG, WebP and GIF. Uploading a
+new one removes the old file, so the bucket holds one picture per player.
+
+`schema.sql` creates the bucket and its policies. Storage lives in a schema
+that file may not own, depending on how the project was created, so that part
+is wrapped in a block that reports a notice instead of failing the whole run.
+If you see `Skipped the avatars bucket`, do it by hand:
+
+1. Storage → New bucket → name it `avatars`, tick **Public bucket**.
+2. Storage → Policies → on `objects`, allow `SELECT` where
+   `bucket_id = 'avatars'`.
+3. Allow `INSERT`, `UPDATE` and `DELETE` for `authenticated` where
+   `bucket_id = 'avatars' AND (storage.foldername(name))[1] = auth.uid()::text`.
+
+Players who have not set a picture get the first letter of their name on a
+colour derived from it, so everyone is still distinguishable at a glance. That
+same fallback catches a picture that fails to load, so a broken image icon
+never appears at the table.
 
 ## Why the anon key is in the repo
 
@@ -196,12 +296,12 @@ front-end code, rotate it immediately.
 
 **What the database enforces.** Turn ownership of the opening card, seat
 membership, that the deal cannot change mid-game, that positions advance one
-version at a time, and — the important one — scores. `finish_game()` updates
-each player's win, loss and expected-durak totals itself, in one transaction,
-and score is derived from those totals rather than stored. A client never sends
-a score or any part of one. You
-also cannot name someone else the durak unless the stored position agrees;
-naming yourself is always allowed, which is how conceding works.
+version at a time, that you may only write a picture into your own folder, and
+— the important one — ratings. `finish_game()` computes every change itself, in
+one transaction, from ratings it has just locked. A client never sends a rating
+or any part of one. You also cannot name someone else the durak unless the
+stored position agrees; naming yourself is always allowed, which is how
+conceding works.
 
 **What it does not enforce.** Two things:
 
@@ -213,6 +313,9 @@ naming yourself is always allowed, which is how conceding works.
    watching, since spectating is exactly the ability to see those hands. That
    also means a player could open another running table's position in
    devtools and read the cards there.
+
+Finished games are readable by everyone, which is what the recent-games list on
+the lobby is built from. That gives nothing away: the game is over.
 
 For a ladder among people you know this is usually fine — cheating is visible
 and socially expensive. If you want it airtight, move the engine server-side.
@@ -244,26 +347,43 @@ src/js/fx.js             card movement, animated as copies that follow each card
 src/js/tablesize.js      fits the table to the window; the drag-to-resize corner
 src/js/sound.js          sound effects, pooled and mutable
 src/audio/               the clips themselves
-src/js/score.js          score model, mirrored by public.score()
+src/js/rating.js         rating model, mirrored by public.rating_changes()
 src/js/db.js             every Supabase call lives here
 src/js/game.js           table rendering, input, spectating, stale-write retry
+src/js/account.js        your own name and picture
 src/js/{app,auth,lobby,leaderboard,ui}.js
-supabase/schema.sql      tables, RLS, RPCs, score maths
-supabase/migration-*.sql run these only if you already ran an older schema.sql
+supabase/schema.sql      tables, RLS, RPCs, rating maths, avatars bucket
 tests/engine.test.mjs    playouts at 2, 3 and 4 players
-tests/sync.test.mjs      SQL contract, concurrency, score behaviour
+tests/sync.test.mjs      SQL contract, concurrency, rating behaviour
+tests/rating.test.mjs    the rating model on its own
+tests/markup.test.mjs    templates, stylesheet and scripts agree with each other
+tests/sql/               runs schema.sql against a throwaway Postgres
 ```
 
 The generator supports four tags: `{{ include "partials/x.html" }}`,
 `{{ config.some.key }}`, `{{ asset "styles/main.css" }}` (content-hashed URL),
 and `{{ build.hash }}` / `{{ build.date }}`.
 
+## The lobby's recent games
+
+Every finished game on the site, newest first, ten to a page. Each row says who
+was left holding the cards, who else was at the table, and what the game did to
+*your* rating — or `n/a` where you were not at that table. Games you played in
+are marked down the left edge, green if you got out and red if you were the
+durak, so your own history still stands out of the feed.
+
+The list is ordered by when a game ended rather than when its table was opened,
+since a long game started before a short one can finish after it. It refreshes
+itself while you are on the newest page and leaves you alone while you are
+paging back through the history.
+
 ## Cost
 
-GitHub Pages is free. Supabase's free tier covers 500 MB of database, 50,000
-monthly active users, and 200 concurrent realtime connections, far more than a
-friend group will use. The one thing to watch is that Supabase pauses free
-projects after a week with no activity; opening the dashboard wakes it up.
+GitHub Pages is free. Supabase's free tier covers 500 MB of database, 1 GB of
+storage, 50,000 monthly active users, and 200 concurrent realtime connections,
+far more than a friend group will use. The one thing to watch is that Supabase
+pauses free projects after a week with no activity; opening the dashboard wakes
+it up.
 
 ## Card movement
 
@@ -296,7 +416,7 @@ suit are in its top corner, so the half left showing is the half worth
 reading.
 
 The durak's hand turns face up the moment the game is decided, before the
-scores come up, so everyone sees what they were left holding.
+ratings come up, so everyone sees what they were left holding.
 
 The stock is a tight stack of face-down cards lying over the trump card,
 which is turned side on and sticks out to the right. The stack always spans
@@ -320,10 +440,18 @@ fitting the window. Arrow keys resize it from the keyboard.
 
 ## Sound
 
-Five short clips in `src/audio/`, played from `src/js/sound.js`: the game
-starting, a card landing, the table being gathered up, and a result each way.
-Each clip keeps a small pool of audio elements, because two cards can land close
-enough together that one element cannot overlap itself.
+Six short clips in `src/audio/`, played from `src/js/sound.js`: the game
+starting, a card landing, the defender announcing a take, the table being
+gathered up, and a result each way. `CLIPS` at the top of `sound.js` is the
+list, and each entry carries a per-clip trim so the mix is balanced before the
+volume slider touches it.
+
+Everything runs through the Web Audio API rather than `<audio>` elements. The
+obvious implementation sets `volume` on an element per clip, and that does not
+work: iOS and Safari treat `HTMLMediaElement.volume` as read-only and silently
+ignore writes, so the slider would appear to do nothing on exactly the devices
+most likely to be used here. A GainNode gives real volume control everywhere,
+and decoded buffers overlap freely, so two cards landing together need no pool.
 
 There is deliberately no per-card sound while dealing or drawing. The gathering
 slide already covers those moments, and a clip firing once per card turned into
@@ -331,9 +459,10 @@ a rattle. To bring one back, add it to `CLIPS` in `sound.js` and call it from
 `playEventSounds` in `game.js` (the card sound itself plays from
 `planMoves`, as each card lands on the table).
 
-Browsers refuse to play anything until the person has interacted with the page,
-so the first click is used to prime the clips rather than to play them. The
-Sound button on the table toggles them off, and the preference is remembered.
+Browsers start an AudioContext suspended until the person interacts with the
+page, so `setSoundActive()` resumes it when a table appears and again on the
+next gesture after that. Nothing is fetched or decoded until then — sound
+belongs to the game and nowhere else. The volume slider is remembered.
 
 To swap a clip, drop a replacement into `src/audio/` under the same name and
 rebuild. Anything a browser can play works; the files there are mono MP3 because

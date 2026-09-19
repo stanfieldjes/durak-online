@@ -24,8 +24,14 @@
   </div>
 
   <div class="lobby__history">
-    <h2 class="heading">Your last games</h2>
+    <h2 class="heading">Recent games</h2>
     <ul class="history" id="recent-games"></ul>
-    <p class="empty" id="no-history" hidden>No games yet.</p>
+    <p class="empty" id="no-history" hidden>No finished games yet.</p>
+
+    <nav class="pager" id="recent-pager" aria-label="Recent games" hidden>
+      <button type="button" class="btn btn--quiet" id="recent-prev">&lsaquo; Newer</button>
+      <span class="pager__count" id="recent-page" aria-live="polite"></span>
+      <button type="button" class="btn btn--quiet" id="recent-next">Older &rsaquo;</button>
+    </nav>
   </div>
 </section>

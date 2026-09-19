@@ -1,7 +1,6 @@
 import { supabase, readableError } from './supabase.js';
 import { getProfile, createProfile } from './db.js';
-import { $, $$, show, setText, paintScore } from './ui.js';
-import { computeScore } from './score.js';
+import { $, $$, show, setText, clear, paintRating, avatarEl } from './ui.js';
 
 let mode = 'sign-in';
 
@@ -55,14 +54,9 @@ export function onAuthChange(handler) {
   });
 }
 
-/** A profile row carries the totals; the score falls out of them. */
-export function scoreOf(profile) {
-  if (!profile) return null;
-  return computeScore({
-    games: profile.wins + profile.losses + profile.draws,
-    duraks: profile.losses,
-    expectedDuraks: profile.expected_duraks,
-  });
+/** A profile row carries the rating outright; nothing has to be derived. */
+export function ratingOf(profile) {
+  return profile?.rating ?? null;
 }
 
 export function renderWhoami() {
@@ -71,8 +65,13 @@ export function renderWhoami() {
     show(box, false);
     return;
   }
+
+  const face = $('#whoami-avatar');
+  clear(face);
+  face.append(avatarEl(session.profile, { size: 'sm' }));
+
   setText($('#whoami-name'), session.profile.username);
-  paintScore($('#whoami-elo'), scoreOf(session.profile));
+  paintRating($('#whoami-rating'), ratingOf(session.profile));
   show(box, true);
 }
 
@@ -99,6 +98,20 @@ function showError(message) {
   show(el, Boolean(message));
 }
 
+/**
+ * Names may be in any script, so the length is counted in characters rather
+ * than in code units — the database counts the same way, and to anyone typing
+ * a name in Cyrillic or Japanese a "20 character" limit that quietly means
+ * ten is simply wrong.
+ */
+export function nameProblem(name) {
+  const trimmed = name.trim();
+  const length = [...trimmed].length;
+  if (length < 3 || length > 20) return 'Pick a name between 3 and 20 characters.';
+  if (!/[^\s\p{P}\p{S}]/u.test(trimmed)) return 'A name needs at least one letter or digit.';
+  return null;
+}
+
 export function initAuthView(onSignedIn) {
   $$('[data-auth-tab]').forEach((tab) => {
     tab.addEventListener('click', () => setMode(tab.dataset.authTab));
@@ -112,9 +125,12 @@ export function initAuthView(onSignedIn) {
     const password = form.password.value;
     const username = form.username.value.trim();
 
-    if (mode === 'sign-up' && (username.length < 3 || username.length > 20)) {
-      showError('Pick a name between 3 and 20 characters.');
-      return;
+    if (mode === 'sign-up') {
+      const problem = nameProblem(username);
+      if (problem) {
+        showError(problem);
+        return;
+      }
     }
     if (password.length < 8) {
       showError('Password must be at least 8 characters.');
@@ -142,7 +158,8 @@ export function initAuthView(onSignedIn) {
 
       // An account can exist without a profile if sign-up was interrupted.
       if (session.user && !session.profile) {
-        const fallback = (session.user.email || 'player').split('@')[0].slice(0, 20);
+        const local = (session.user.email || 'player').split('@')[0];
+        const fallback = [...local].slice(0, 20).join('');
         session.profile = await createProfile(session.user.id, fallback);
       }
 

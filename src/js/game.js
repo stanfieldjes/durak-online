@@ -38,8 +38,8 @@ import {
   isTooEarlyError,
 } from './db.js';
 import { readableError } from './supabase.js';
-import { session, scoreOf } from './auth.js';
-import { formatScore } from './score.js';
+import { session, ratingOf } from './auth.js';
+import { formatRating, formatRatingDelta } from './rating.js';
 import {
   fly,
   boxOf,
@@ -54,7 +54,9 @@ import {
 } from './fx.js';
 import { play as playSound, getVolume, setVolume, setSoundActive } from './sound.js';
 import { initTableSize, tableShown, tableHidden } from './tablesize.js';
-import { $, show, setText, clear, toast, cardEl, paintScore } from './ui.js';
+import {
+  $, show, setText, clear, toast, cardEl, avatarEl, paintRating, paintDelta,
+} from './ui.js';
 
 /**
  * How long a finished round stays on the table before it clears itself.
@@ -75,7 +77,7 @@ const clearDelayMs = (position) =>
     ? Number(game?.quick_clear_delay_ms ?? FALLBACK_QUICK_CLEAR_DELAY_MS)
     : Number(game?.clear_delay_ms ?? FALLBACK_CLEAR_DELAY_MS);
 
-/** How long the finished table stays on screen before the scores appear. */
+/** How long the finished table stays on screen before the ratings appear. */
 const RESULT_DELAY_MS = 2200;
 
 /**
@@ -174,7 +176,7 @@ export function initGame() {
     // The track fills up to the handle, which needs the current value as a
     // percentage since CSS cannot read an input's value on its own.
     slider.style.setProperty('--fill', `${Math.round(level * 100)}%`);
-    icon.textContent = level === 0 ? '\u2715' : '\u266A';
+    icon.textContent = level === 0 ? '✕' : '♪';
     icon.classList.toggle('is-silent', level === 0);
   };
   slider.addEventListener('input', () => {
@@ -865,13 +867,6 @@ function play(move) {
 }
 
 /**
- * Send queued moves one at a time.
- *
- * Each write names the version it was built on, so if another player got there
- * first the database refuses it. We then re-read, replay whatever is still
- * legal, and carry on from there.
- */
-/**
  * Queued card moves (attack, defend, take). A Done or the automatic clear
  * that gets dropped because the table cleared anyway is not worth a message.
  */
@@ -1164,10 +1159,14 @@ function renderWaiting() {
     if (profile) {
       const name = document.createElement('span');
       name.className = 'seat__name';
-      name.textContent = profile.username + (game.host_id === profile.id ? ' (host)' : '');
+      name.append(avatarEl(profile, { size: 'sm' }));
+      const text = document.createElement('span');
+      text.textContent = profile.username + (game.host_id === profile.id ? ' (host)' : '');
+      name.append(text);
+
       const rating = document.createElement('span');
       rating.className = 'seat__rating';
-      paintScore(rating, scoreOf(profile));
+      paintRating(rating, ratingOf(profile));
       li.append(name, rating);
     } else {
       li.textContent = 'Empty';
@@ -1273,13 +1272,15 @@ function opponentPanel(seat) {
   const head = document.createElement('div');
   head.className = 'player__head';
 
+  const face = avatarEl(profile, { size: 'xs' });
+
   const name = document.createElement('span');
   name.className = 'player__name';
   name.textContent = profile?.username ?? `Seat ${seat + 1}`;
 
   const rating = document.createElement('span');
   rating.className = 'player__rating';
-  paintScore(rating, scoreOf(profile));
+  paintRating(rating, ratingOf(profile));
 
   const role = document.createElement('span');
   role.className = 'player__role';
@@ -1289,7 +1290,7 @@ function opponentPanel(seat) {
       ? 'done'
       : roleOf(state, seat);
 
-  head.append(name, rating, role);
+  head.append(face, name, rating, role);
 
   // Only cards that have arrived count; one still in the air joins when it lands.
   const hand = state.hands[seat];
@@ -1616,7 +1617,7 @@ async function showResult() {
     /* fall back to what we have */
   }
 
-  const deltas = game.score_delta ?? {};
+  const deltas = game.rating_delta ?? {};
   const mine = deltas[session.user.id];
   const numeric = mine === undefined || mine === null ? null : Number(mine);
 
@@ -1648,16 +1649,16 @@ async function showResult() {
 
   setText($('#result-title'), title);
 
-  const figure = $('#result-elo');
-  paintScore(figure, numeric);
-  setText(figure, numeric === null ? '' : `${formatScore(numeric)} score`);
+  const figure = $('#result-delta');
+  paintDelta(figure, numeric);
+  setText(figure, numeric === null ? '' : `${formatRatingDelta(numeric)} rating`);
 
   const list = $('#result-table');
   clear(list);
   for (const seatRow of game.players ?? []) {
     const d = deltas[seatRow.player_id];
     const value = d === undefined || d === null ? null : Number(d);
-    const settled = scoreOf(seatRow.profile);
+    const settled = ratingOf(seatRow.profile);
 
     const li = document.createElement('li');
     const lost = decided ? seatRow.seat === durakSeat : game.durak_id === seatRow.player_id;
@@ -1665,18 +1666,22 @@ async function showResult() {
 
     const name = document.createElement('span');
     name.className = 'result__name';
-    name.textContent = seatRow.profile?.username ?? `Seat ${seatRow.seat + 1}`;
+    name.append(avatarEl(seatRow.profile, { size: 'xs' }));
+    const text = document.createElement('span');
+    text.textContent = seatRow.profile?.username ?? `Seat ${seatRow.seat + 1}`;
+    name.append(text);
 
-    // The score and this game's change to it are coloured independently:
-    // someone can sit at +12 overall and still have just lost 4.
+    // The rating a player now sits at, and what this game did to it. The
+    // rating is shown plain and the change is coloured: a rating is a place
+    // on the ladder rather than a verdict, but a change has a direction.
     const total = document.createElement('span');
-    total.className = 'result__score';
-    paintScore(total, settled);
+    total.className = 'result__rating';
+    total.textContent = formatRating(settled);
 
     const change = document.createElement('span');
     change.className = 'result__change';
-    paintScore(change, value);
-    change.textContent = value === null ? '(—)' : `(${formatScore(value)})`;
+    paintDelta(change, value);
+    change.textContent = value === null ? '(—)' : `(${formatRatingDelta(value)})`;
 
     li.append(name, total, change);
     list.append(li);
@@ -1686,7 +1691,7 @@ async function showResult() {
     const fresh = await getProfile(session.user.id);
     if (fresh) {
       session.profile = fresh;
-      paintScore($('#whoami-elo'), scoreOf(fresh));
+      paintRating($('#whoami-rating'), ratingOf(fresh));
     }
   } catch {
     /* the header keeps its old number */

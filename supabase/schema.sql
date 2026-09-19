@@ -1,46 +1,129 @@
--- Durak Online — schema, policies, and RPCs. Tables seat four; the host can
--- start as soon as two are seated.
+-- Durak Online — schema, policies, and RPCs. Tables seat two to eight.
 -- Paste the whole file into the Supabase SQL editor and run it once.
 --
 -- Design rule: the browser never writes to a table directly. Every write goes
--- through a SECURITY DEFINER function that re-checks the claim being made.
--- In particular a client can never set its own score. Scores are derived from
--- win and loss totals the database keeps itself, never sent by a client.
+-- through a SECURITY DEFINER function that re-checks the claim being made. In
+-- particular a client can never set its own rating. Ratings are computed by
+-- public.rating_changes() inside finish_game(), never sent by a client.
+--
+-- Safe to run more than once. Everything is either `if not exists` or an
+-- idempotent alter, so an existing database is brought up to date rather than
+-- rebuilt. Rows are never touched.
+
+-- ------------------------------------------------------------- constants --
+
+-- Where every player opens. Mirrors START in src/js/rating.js. It is a
+-- function rather than a literal because both the column default and the
+-- insert policy below need to agree with it.
+create or replace function public.rating_start()
+returns numeric language sql immutable parallel safe as $$
+  select 1000::numeric;
+$$;
 
 -- ---------------------------------------------------------------- profiles --
 
 create table if not exists public.profiles (
   id         uuid primary key references auth.users on delete cascade,
-  username   text unique not null
-             check (char_length(username) between 3 and 20
-                    and username ~ '^[A-Za-z0-9_ -]+$'),
+  username   text unique not null,
+  avatar_url text,
+  rating     numeric(12,6) not null default public.rating_start(),
   wins       int  not null default 0,
   losses     int  not null default 0,   -- games ended as the durak
   draws      int  not null default 0,
-  -- Running total of each game's 1/playerCount: how many times the table
-  -- sizes played say this player should have been the durak.
-  expected_duraks numeric(12,6) not null default 0,
   created_at timestamptz not null default now()
 );
 
+-- Columns added after the first release. An existing table keeps its rows.
+alter table public.profiles add column if not exists avatar_url text;
+alter table public.profiles
+  add column if not exists rating numeric(12,6) not null default public.rating_start();
+
+-- The old percentage-point score kept a running sum of each game's 1/n. The
+-- rating replaces it outright and derives nothing from it, so it goes.
+--
+-- Postgres will not drop a column while anything still refers to it, and on a
+-- database that ran the old schema two things do: the leaderboard view, which
+-- selected it, and the insert policy, which required it to start at zero. Both
+-- are rebuilt further down, so they are torn down here first — without this
+-- the drop fails with "cannot drop column expected_duraks ... because other
+-- objects depend on it" and takes the whole file down with it.
+--
+-- Not `drop ... cascade`: that would also remove anything else hanging off the
+-- column without saying what, and a schema file should never silently delete
+-- something it did not put there.
+drop view if exists public.leaderboard;
+drop policy if exists "create own profile" on public.profiles;
+drop function if exists public.score(int, int, numeric);
+
+alter table public.profiles drop column if exists expected_duraks;
+
+-- Usernames may be in any script: Дурак and 田中 are names like any other.
+-- The rule is only that a name is a sensible length, carries no control
+-- characters, is not padded with spaces, and has at least one character in it
+-- that is neither a space nor punctuation.
+--
+-- That last test is written as "not space and not punctuation" rather than the
+-- more obvious [[:alnum:]] because character classes follow the database's
+-- ctype. Under a UTF-8 locale [[:alpha:]] does match Cyrillic and CJK, but
+-- under the C locale it matches ASCII only — so an alnum test would quietly
+-- reject every non-English name on a database created that way. [[:space:]]
+-- and [[:punct:]] are ASCII in the C locale and no wider than they should be
+-- in a UTF-8 one, so a letter in any script passes either way.
+--
+-- Dropped by shape rather than by name, since a database created under the
+-- old ASCII-only rule named its constraint automatically.
+do $$
+declare con_name text;
+begin
+  for con_name in
+    select con.conname
+      from pg_constraint con
+      join pg_class rel on rel.oid = con.conrelid
+      join pg_namespace ns on ns.oid = rel.relnamespace
+     where ns.nspname = 'public'
+       and rel.relname = 'profiles'
+       and con.contype = 'c'
+       and pg_get_constraintdef(con.oid) ilike '%username%'
+  loop
+    execute format('alter table public.profiles drop constraint %I', con_name);
+  end loop;
+end
+$$;
+
+alter table public.profiles add constraint profiles_username_check check (
+  char_length(username) between 3 and 20
+  and username = btrim(username)
+  and username !~ '[[:cntrl:]]'
+  and username ~ '[^[:space:][:punct:]]'
+);
+
+-- Two names that look the same should not both exist. Case folded, and
+-- normalised to NFC first so that an accented letter typed as one code point
+-- and the same letter typed as letter-plus-combining-mark collide rather than
+-- sitting side by side on the leaderboard looking identical.
+create unique index if not exists profiles_username_unique
+  on public.profiles (lower(normalize(username, NFC)));
+
 alter table public.profiles enable row level security;
 
--- Names and records are public; that is what a ladder is.
+-- Names, pictures and records are public; that is what a ladder is.
 drop policy if exists "profiles are readable" on public.profiles;
 create policy "profiles are readable"
   on public.profiles for select
   using (true);
 
--- You may create your own profile row, once, with the defaults above.
+-- You may create your own profile row, once, at the opening rating.
 drop policy if exists "create own profile" on public.profiles;
 create policy "create own profile"
   on public.profiles for insert
   with check (
     auth.uid() = id
-    and wins = 0 and losses = 0 and draws = 0 and expected_duraks = 0
+    and wins = 0 and losses = 0 and draws = 0
+    and rating = public.rating_start()
   );
 
--- Deliberately no UPDATE policy: records move only inside finish_game().
+-- Deliberately no UPDATE policy. Records move only inside finish_game(), and
+-- a name or picture changes only through set_username() / set_avatar().
 
 -- ------------------------------------------------------------------- games --
 
@@ -54,7 +137,9 @@ create table if not exists public.games (
   state        jsonb,
   version      int  not null default 0,   -- mirrors state->>'version'
   durak_id     uuid references public.profiles(id),
-  score_delta  jsonb,
+  -- Each player's rating change for this game, keyed by profile id. Decimals:
+  -- see the header of src/js/rating.js for why they are not whole numbers.
+  rating_delta jsonb,
   -- How long a finished round stays on the table before it may be cleared.
   clear_delay_ms int not null default 10000 check (clear_delay_ms between 0 and 60000),
   -- The same, when the table cannot take another card: just a look at it.
@@ -63,18 +148,23 @@ create table if not exists public.games (
   updated_at   timestamptz not null default now()
 );
 
+alter table public.games add column if not exists rating_delta jsonb;
+alter table public.games drop column if exists score_delta;
+
 create index if not exists games_status_created_idx
   on public.games (status, created_at desc);
+-- The recent-games feed is every finished game newest first, and a game's
+-- last update is the moment it finished. A long game started before a short
+-- one can finish after it, so created_at is the wrong order for that list.
+create index if not exists games_finished_idx
+  on public.games (status, updated_at desc);
 create index if not exists games_host_idx on public.games (host_id);
 
--- Tables seat up to eight. `create table if not exists` above leaves an
--- existing games table alone, so a database created when the limit was four
--- keeps the old default and check until this runs. Safe to run repeatedly:
--- it drops whatever check is on max_players, whatever it was named, and puts
--- the current one back.
+-- Tables seat up to eight. `create table if not exists` leaves an existing
+-- games table alone, so a database created when the limit was four keeps the
+-- old default and check until this runs.
 do $$
-declare
-  con_name text;
+declare con_name text;
 begin
   for con_name in
     select con.conname
@@ -102,38 +192,63 @@ update public.games set max_players = 8
 -- One row per seat. Seats are numbered from 0 and match the engine's arrays.
 create table if not exists public.game_players (
   game_id   uuid not null references public.games(id) on delete cascade,
-  seat      int  not null check (seat between 0 and 3),
+  seat      int  not null,
   player_id uuid not null references public.profiles(id) on delete cascade,
   joined_at timestamptz not null default now(),
   primary key (game_id, seat),
   unique (game_id, player_id)
 );
 
+-- Eight seats, not four. games.max_players has allowed eight for a while, but
+-- this check was left at 0..3, so seats five to eight could not be inserted
+-- and a table above four players failed the moment the fifth player sat down.
+do $$
+declare con_name text;
+begin
+  for con_name in
+    select con.conname
+      from pg_constraint con
+      join pg_class rel on rel.oid = con.conrelid
+      join pg_namespace ns on ns.oid = rel.relnamespace
+     where ns.nspname = 'public'
+       and rel.relname = 'game_players'
+       and con.contype = 'c'
+       and pg_get_constraintdef(con.oid) ilike '%seat%'
+  loop
+    execute format('alter table public.game_players drop constraint %I', con_name);
+  end loop;
+end
+$$;
+
+alter table public.game_players
+  add constraint game_players_seat_check check (seat between 0 and 7);
+
 create index if not exists game_players_player_idx on public.game_players (player_id);
 
 alter table public.games enable row level security;
 alter table public.game_players enable row level security;
 
--- Open and running tables are visible to everyone, so the lobby can list them
--- and anyone can watch a game in progress; finished games stay private to the
--- people who played them.
+-- Open, running and finished tables are all visible to everyone: the lobby
+-- lists the first, anyone may watch the second, and the recent-games feed
+-- shows the third to every player whether or not they were at the table.
 --
 -- A running game's row carries the whole position, every hand included, so
 -- anyone signed in can read the cards of a game they are watching. That is
 -- deliberate — spectators are meant to see them — but it does mean a player
--- could open another table's position in devtools. See README, "Trust model".
+-- could open another table's position in devtools. A finished game's position
+-- gives nothing away, since the game is over. See README, "Trust model".
 drop policy if exists "read open or own games" on public.games;
 create policy "read open or own games"
   on public.games for select
   using (
-    status in ('waiting', 'active')
+    status <> 'abandoned'
     or exists (
       select 1 from public.game_players gp
       where gp.game_id = games.id and gp.player_id = auth.uid()
     )
   );
 
--- Who is sitting where is not secret; the lobby needs it to show tables.
+-- Who sat where is not secret; the lobby and the feed both need it.
 drop policy if exists "seats are readable" on public.game_players;
 create policy "seats are readable"
   on public.game_players for select
@@ -154,19 +269,113 @@ create trigger games_touch_updated_at
   before update on public.games
   for each row execute function public.touch_updated_at();
 
--- ------------------------------------------------------------- leaderboard --
+-- ------------------------------------------------------------------ rating --
 
--- Score: how much better a player does than the table sizes they play would
--- predict, in percentage points. See public.score() below.
-create or replace function public.score(p_games int, p_duraks int, p_expected numeric)
-returns int
-language sql immutable
+/*
+  Rating changes for one finished game. A direct mirror of ratingChanges() in
+  src/js/rating.js — that file's header is the explanation, and
+  tests/sync.test.mjs holds the two against each other.
+
+  p_ratings is one rating per seat, in seat order. p_durak_index is the
+  position of the durak in that array, counting from one, or NULL for a draw.
+  The result is one change per seat, in the same order, summing to zero.
+
+  The probability arithmetic is done in double precision rather than numeric
+  so that it matches JavaScript exactly, since the browser shows a delta the
+  moment a game ends and the database has to arrive at the same number. Only
+  the rounding to six decimal places is done as numeric.
+*/
+create or replace function public.rating_changes(p_ratings numeric[], p_durak_index int)
+returns numeric[]
+language plpgsql immutable
 as $$
-  select case
-           when p_games <= 0 then 0
-           else round(100.0 * (p_expected - p_duraks) / p_games)::int
-         end;
+declare
+  -- Mirrors K, SCALE and FLOOR in src/js/rating.js.
+  k        constant float8  := 24;
+  scale    constant float8  := 400;
+  floor_at constant numeric := 100;
+  step     constant numeric := 0.000001;   -- one unit of numeric(12,6)
+
+  n          int := coalesce(array_length(p_ratings, 1), 0);
+  strongest  float8;
+  weights    float8[] := array[]::float8[];
+  total      float8 := 0;
+  raw        float8[] := array[]::float8[];
+  deltas     numeric[] := array[]::numeric[];
+  actual     float8;
+  survivors  numeric := 0;
+  residual   numeric;
+  dir        numeric;
+  want       numeric;
+  best       int;
+  best_want  numeric;
+  guard      int := 0;
+  is_durak   boolean := p_durak_index is not null and p_durak_index between 1 and n;
+  i          int;
+begin
+  if n = 0 then return array[]::numeric[]; end if;
+  if n = 1 then return array[0::numeric]; end if;
+
+  -- Weights are taken relative to the strongest rating at the table, which
+  -- keeps the exponent small and the arithmetic away from overflow while
+  -- giving exactly the same ratios.
+  select max(r)::float8 into strongest from unnest(p_ratings) as r;
+
+  for i in 1..n loop
+    weights[i] := power(10::float8, (strongest - p_ratings[i]::float8) / scale);
+    total := total + weights[i];
+  end loop;
+
+  for i in 1..n loop
+    if is_durak then
+      actual := case when i = p_durak_index then 1 else 0 end;
+    else
+      actual := 1::float8 / n;              -- a draw is nobody's fault
+    end if;
+    raw[i] := -k * (actual - weights[i] / total);
+    deltas[i] := round(raw[i]::numeric, 6);
+  end loop;
+
+  if is_durak then
+    -- The durak absorbs the rounding remainder, which suits a game whose whole
+    -- point is that one player carries the loss. At six decimal places the
+    -- amount involved is a few millionths of a point.
+    for i in 1..n loop
+      if i <> p_durak_index then survivors := survivors + deltas[i]; end if;
+    end loop;
+    deltas[p_durak_index] := -survivors;
+  else
+    -- A draw has no durak to absorb it, so nudge whichever entries were
+    -- rounded furthest from their exact value until the total is zero again.
+    select sum(d) into residual from unnest(deltas) as d;
+    while residual <> 0 and guard < 100 loop
+      guard := guard + 1;
+      dir := case when residual > 0 then -step else step end;
+      best := 1;
+      best_want := null;
+      for i in 1..n loop
+        want := sign(dir) * (raw[i]::numeric - deltas[i]);
+        if best_want is null or want > best_want then
+          best_want := want;
+          best := i;
+        end if;
+      end loop;
+      deltas[best] := deltas[best] + dir;
+      residual := residual + dir;
+    end loop;
+  end if;
+
+  -- Do not push anyone below the floor. This is the one case where the pool is
+  -- not zero sum: points are created rather than taken from someone else.
+  for i in 1..n loop
+    deltas[i] := greatest(floor_at, p_ratings[i] + deltas[i]) - p_ratings[i];
+  end loop;
+
+  return deltas;
+end;
 $$;
+
+-- ------------------------------------------------------------- leaderboard --
 
 drop view if exists public.leaderboard;
 create view public.leaderboard
@@ -174,24 +383,22 @@ with (security_invoker = on) as
   select
     id,
     username,
+    avatar_url,
     wins + losses + draws as games,
     losses as duraks,
-    expected_duraks,
-    round(100.0 * losses / nullif(wins + losses + draws, 0))::int as durak_rate,
-    round(100.0 * expected_duraks / nullif(wins + losses + draws, 0))::int as expected_rate,
-    public.score(wins + losses + draws, losses, expected_duraks) as score
+    rating
   from public.profiles
   where wins + losses + draws > 0
-  order by score desc, games desc, username;
+  order by rating desc, games desc, username;
 
 -- --------------------------------------------------------------- functions --
 
 -- ------------------------------------------------------------ lobby nudge --
 --
 -- The lobby learns about changes through realtime, and realtime respects RLS.
--- The moment a table stops being 'waiting', its games row becomes invisible to
--- everyone not sitting at it, so Supabase sends them nothing: the table would
--- stay in their lobby list until they refreshed.
+-- The moment a table stops being 'waiting', its games row can become invisible
+-- to people not sitting at it, so Supabase sends them nothing and the table
+-- would stay in their lobby list until they refreshed.
 --
 -- Seats are readable by everyone, though. Touching the table's seat rows puts
 -- an UPDATE on the wire that every lobby receives, and the lobby re-reads its
@@ -206,11 +413,66 @@ $$;
 revoke all on function public.nudge_lobby(uuid) from public, anon, authenticated;
 -- Deliberately not granted to anyone: only the functions below call it.
 
+-- --------------------------------------------------------- name & picture --
+
+-- Change your own name. The check constraint above decides what is allowed;
+-- this only tidies the input and turns a collision into a readable message.
+create or replace function public.set_username(p_name text)
+returns public.profiles
+language plpgsql security definer set search_path = public
+as $$
+declare
+  me   uuid := auth.uid();
+  name text := btrim(coalesce(p_name, ''));
+  row  public.profiles;
+begin
+  if me is null then
+    raise exception 'not authenticated';
+  end if;
+
+  update profiles set username = name where id = me returning * into row;
+  if not found then
+    raise exception 'finish creating your profile first';
+  end if;
+  return row;
+exception
+  when unique_violation then
+    raise exception 'somebody is already using that name';
+  when check_violation then
+    raise exception 'a name needs 3 to 20 characters and at least one letter or digit';
+end;
+$$;
+
+-- Set or clear your own picture. The file itself lives in the `avatars`
+-- storage bucket, which only lets you write under your own user id; this
+-- records where it ended up. NULL removes it.
+create or replace function public.set_avatar(p_url text)
+returns public.profiles
+language plpgsql security definer set search_path = public
+as $$
+declare
+  me  uuid := auth.uid();
+  row public.profiles;
+begin
+  if me is null then
+    raise exception 'not authenticated';
+  end if;
+  if p_url is not null and p_url !~ '^https://' then
+    raise exception 'a picture address must be https';
+  end if;
+  if p_url is not null and char_length(p_url) > 500 then
+    raise exception 'that address is too long';
+  end if;
+
+  update profiles set avatar_url = p_url where id = me returning * into row;
+  if not found then
+    raise exception 'finish creating your profile first';
+  end if;
+  return row;
+end;
+$$;
+
 -- ------------------------------------------------------------ create_game --
---
--- Always four seats. The parameter stays so a browser still running the old
--- page can call it, but whatever it asks for, the table seats four; the host
--- can start early once two people are seated.
 create or replace function public.create_game(p_max_players int default 8)
 returns public.games
 language plpgsql security definer set search_path = public
@@ -465,36 +727,37 @@ begin
 end;
 $$;
 
--- Settle the game and update everyone's record.
+-- Settle the game and move everyone's rating.
 --
 -- p_durak_seat is the seat of the fool, or -1 for a draw. You may only name
 -- someone else the durak if the stored position agrees; naming yourself is
 -- always allowed, which is how conceding works.
 --
--- Every seat's expected_duraks grows by 1/n for this game, where n is how many
--- people were at the table, and the durak's loss count grows by one. Score is
--- derived from those totals rather than stored, so it can never drift out of
--- step with the games behind it. See public.score() and src/js/score.js.
+-- The ratings at the table decide what the result was worth, and
+-- public.rating_changes() turns that into one change per seat. The changes
+-- always sum to zero, so nothing is created or destroyed, and the whole thing
+-- happens in one transaction with the row being marked finished. A client
+-- never sends a rating or any part of one.
 create or replace function public.finish_game(p_game uuid, p_durak_seat int)
 returns public.games
 language plpgsql security definer set search_path = public
 as $$
 declare
-  me         uuid := auth.uid();
-  row        public.games;
-  my_seat    int;
-  n          int;
-  finished   boolean;
-  is_draw    boolean;
-  claimed    int;
-  seats      int[];
-  ids        uuid[];
-  share      numeric;
-  before     int;
-  after      int;
-  i          int;
-  durak_uuid uuid;
-  payload    jsonb := '{}'::jsonb;
+  me          uuid := auth.uid();
+  row         public.games;
+  my_seat     int;
+  n           int;
+  finished    boolean;
+  is_draw     boolean;
+  claimed     int;
+  seats       int[];
+  ids         uuid[];
+  ratings     numeric[];
+  deltas      numeric[];
+  durak_index int := null;
+  durak_uuid  uuid := null;
+  payload     jsonb := '{}'::jsonb;
+  i           int;
 begin
   if me is null then
     raise exception 'not authenticated';
@@ -531,6 +794,7 @@ begin
     is_draw := false;                   -- a concession is not a draw
   end if;
 
+  -- Seat order throughout, so index i in every array is the same player.
   select array_agg(gp.seat order by gp.seat),
          array_agg(gp.player_id order by gp.seat)
     into seats, ids
@@ -541,49 +805,45 @@ begin
   if n is null or n < 2 then
     raise exception 'this table never had enough players';
   end if;
+
+  -- Lock every profile before reading the ratings the changes are computed
+  -- from, so two tables finishing at the same instant cannot both work from
+  -- the same stale rating for a player who was at both.
   perform 1 from profiles where id = any(ids) for update;
 
-  -- One durak per game, so each seat carries 1/n of the blame in advance.
-  share := 1.0 / n;
+  select array_agg(p.rating order by array_position(ids, p.id))
+    into ratings
+    from profiles p
+   where p.id = any(ids);
 
-  for i in 1..n loop
-    select public.score(wins + losses + draws, losses, expected_duraks)
-      into before
-      from profiles where id = ids[i];
-
-    if p_durak_seat = -1 then
-      update profiles
-         set draws = draws + 1,
-             expected_duraks = expected_duraks + share
-       where id = ids[i];
-    elsif seats[i] = p_durak_seat then
-      update profiles
-         set losses = losses + 1,
-             expected_duraks = expected_duraks + share
-       where id = ids[i];
-    else
-      update profiles
-         set wins = wins + 1,
-             expected_duraks = expected_duraks + share
-       where id = ids[i];
-    end if;
-
-    select public.score(wins + losses + draws, losses, expected_duraks)
-      into after
-      from profiles where id = ids[i];
-
-    payload := payload || jsonb_build_object(ids[i]::text, after - before);
-  end loop;
-
-  durak_uuid := null;
   if p_durak_seat <> -1 then
     for i in 1..n loop
-      if seats[i] = p_durak_seat then durak_uuid := ids[i]; end if;
+      if seats[i] = p_durak_seat then
+        durak_index := i;
+        durak_uuid := ids[i];
+      end if;
     end loop;
   end if;
 
+  deltas := public.rating_changes(ratings, durak_index);
+
+  for i in 1..n loop
+    if p_durak_seat = -1 then
+      update profiles set draws = draws + 1, rating = rating + deltas[i]
+       where id = ids[i];
+    elsif seats[i] = p_durak_seat then
+      update profiles set losses = losses + 1, rating = rating + deltas[i]
+       where id = ids[i];
+    else
+      update profiles set wins = wins + 1, rating = rating + deltas[i]
+       where id = ids[i];
+    end if;
+
+    payload := payload || jsonb_build_object(ids[i]::text, deltas[i]);
+  end loop;
+
   update games
-     set status = 'finished', durak_id = durak_uuid, score_delta = payload
+     set status = 'finished', durak_id = durak_uuid, rating_delta = payload
    where id = p_game
   returning * into row;
 
@@ -658,6 +918,8 @@ revoke all on function public.submit_move(uuid, jsonb, int)       from public;
 revoke all on function public.finish_game(uuid, int)              from public;
 revoke all on function public.abandon_game(uuid)                  from public;
 revoke all on function public.leave_table(uuid)                   from public;
+revoke all on function public.set_username(text)                  from public;
+revoke all on function public.set_avatar(text)                    from public;
 
 grant execute on function public.create_game(int)                 to authenticated;
 grant execute on function public.join_game(uuid, jsonb)           to authenticated;
@@ -666,6 +928,70 @@ grant execute on function public.submit_move(uuid, jsonb, int)    to authenticat
 grant execute on function public.finish_game(uuid, int)           to authenticated;
 grant execute on function public.abandon_game(uuid)               to authenticated;
 grant execute on function public.leave_table(uuid)                to authenticated;
+grant execute on function public.set_username(text)               to authenticated;
+grant execute on function public.set_avatar(text)                 to authenticated;
+
+-- --------------------------------------------------------------- avatars --
+
+/*
+  Profile pictures live in a public storage bucket, one folder per player,
+  named with their user id. Anyone may look; you may only write inside your
+  own folder, which is what stops one player replacing another's picture.
+
+  Storage lives in a schema this file may not own, depending on how the
+  project was created. If that is the case the block below says so and changes
+  nothing — see README, "Profile pictures", for the three clicks that do the
+  same thing from the Storage tab.
+*/
+do $$
+begin
+  insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+  values ('avatars', 'avatars', true, 2097152,
+          array['image/png', 'image/jpeg', 'image/webp', 'image/gif'])
+  on conflict (id) do update
+     set public = true,
+         file_size_limit = 2097152,
+         allowed_mime_types = array['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+
+  execute 'drop policy if exists "avatars are readable" on storage.objects';
+  execute $p$
+    create policy "avatars are readable" on storage.objects
+      for select using (bucket_id = 'avatars')
+  $p$;
+
+  execute 'drop policy if exists "write own avatar" on storage.objects';
+  execute $p$
+    create policy "write own avatar" on storage.objects
+      for insert to authenticated
+      with check (
+        bucket_id = 'avatars'
+        and (storage.foldername(name))[1] = auth.uid()::text
+      )
+  $p$;
+
+  execute 'drop policy if exists "replace own avatar" on storage.objects';
+  execute $p$
+    create policy "replace own avatar" on storage.objects
+      for update to authenticated
+      using (
+        bucket_id = 'avatars'
+        and (storage.foldername(name))[1] = auth.uid()::text
+      )
+  $p$;
+
+  execute 'drop policy if exists "remove own avatar" on storage.objects';
+  execute $p$
+    create policy "remove own avatar" on storage.objects
+      for delete to authenticated
+      using (
+        bucket_id = 'avatars'
+        and (storage.foldername(name))[1] = auth.uid()::text
+      )
+  $p$;
+exception when others then
+  raise notice 'Skipped the avatars bucket (%). Create it from the Storage tab instead — see README, "Profile pictures".', sqlerrm;
+end
+$$;
 
 -- --------------------------------------------------------------- realtime --
 
@@ -673,8 +999,8 @@ grant execute on function public.leave_table(uuid)                to authenticat
 -- stream, so you only receive rows you are allowed to read.
 --
 -- Adding a table that is already published is an error, and the SQL editor
--- runs this file as one transaction, so that error would roll back
--- everything above it. Add each table only if it is not there yet.
+-- runs this file as one transaction, so that error would roll back everything
+-- above it. Add each table only if it is not there yet.
 do $$
 begin
   if not exists (

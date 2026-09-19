@@ -1,12 +1,20 @@
 import { supabase } from './supabase.js';
 import { MAX_PLAYERS } from './durak.js';
 
+/** How many finished games one page of the recent games list holds. */
+export const RECENT_PER_PAGE = 10;
+
+/** Where profile pictures live. Created by supabase/schema.sql. */
+const AVATAR_BUCKET = 'avatars';
+
 /* ---------------- profiles ---------------- */
+
+const PROFILE_COLUMNS = 'id, username, avatar_url, rating, wins, losses, draws';
 
 export async function getProfile(userId) {
   const { data, error } = await supabase
     .from('profiles')
-    .select('id, username, wins, losses, draws, expected_duraks')
+    .select(PROFILE_COLUMNS)
     .eq('id', userId)
     .maybeSingle();
   if (error) throw error;
@@ -23,10 +31,60 @@ export async function createProfile(userId, username) {
   return data;
 }
 
+/** Change your own name. The database decides what is allowed. */
+export async function setUsername(name) {
+  const { data, error } = await supabase.rpc('set_username', { p_name: name });
+  if (error) throw error;
+  return data;
+}
+
+/** Record where your picture lives, or pass null to remove it. */
+export async function setAvatar(url) {
+  const { data, error } = await supabase.rpc('set_avatar', { p_url: url });
+  if (error) throw error;
+  return data;
+}
+
+/**
+ * Put a picture in the avatars bucket and return its public address.
+ *
+ * The path always begins with the player's own user id, because that is what
+ * the storage policy checks — you may write inside your own folder and
+ * nowhere else. The name after it changes on every upload so that a new
+ * picture is never served from a cache of the old one, and the previous file
+ * is removed once the new one is in place.
+ */
+export async function uploadAvatar(userId, file) {
+  const extension = (file.name.split('.').pop() ?? 'png').toLowerCase().replace(/[^a-z0-9]/g, '');
+  const path = `${userId}/${Date.now()}.${extension || 'png'}`;
+
+  const { error } = await supabase.storage
+    .from(AVATAR_BUCKET)
+    .upload(path, file, { contentType: file.type, upsert: false });
+  if (error) throw error;
+
+  const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path);
+  await removeOldAvatars(userId, path);
+  return data.publicUrl;
+}
+
+/** Tidy up whatever this player uploaded before, so the bucket holds one file each. */
+async function removeOldAvatars(userId, keepPath) {
+  try {
+    const { data } = await supabase.storage.from(AVATAR_BUCKET).list(userId);
+    const stale = (data ?? [])
+      .map((entry) => `${userId}/${entry.name}`)
+      .filter((path) => path !== keepPath);
+    if (stale.length) await supabase.storage.from(AVATAR_BUCKET).remove(stale);
+  } catch {
+    // A leftover file is untidy, not broken. Never fail an upload over it.
+  }
+}
+
 export async function getLeaderboard(limit = 50) {
   const { data, error } = await supabase
     .from('leaderboard')
-    .select('id, username, games, duraks, expected_duraks, durak_rate, expected_rate, score')
+    .select('id, username, avatar_url, games, duraks, rating')
     .limit(limit);
   if (error) throw error;
   return data ?? [];
@@ -35,8 +93,9 @@ export async function getLeaderboard(limit = 50) {
 /* ---------------- games ---------------- */
 
 const GAME_COLUMNS = `
-  id, status, host_id, max_players, seed, state, version, durak_id, score_delta, created_at, updated_at, clear_delay_ms, quick_clear_delay_ms,
-  players:game_players ( seat, player_id, profile:profiles ( id, username, wins, losses, draws, expected_duraks ) )
+  id, status, host_id, max_players, seed, state, version, durak_id, rating_delta,
+  created_at, updated_at, clear_delay_ms, quick_clear_delay_ms,
+  players:game_players ( seat, player_id, profile:profiles ( ${PROFILE_COLUMNS} ) )
 `;
 
 /**
@@ -102,6 +161,25 @@ export async function listTables(limit = 30) {
 }
 
 /**
+ * One page of finished games — everybody's, not just yours.
+ *
+ * Ordered by when the game ended rather than when its table was opened, since
+ * a long game started before a short one can finish after it. The count comes
+ * back with the page so the pager knows how many there are in total.
+ */
+export async function listRecentGames({ page = 0, perPage = RECENT_PER_PAGE } = {}) {
+  const from = Math.max(0, page) * perPage;
+  const { data, error, count } = await supabase
+    .from('games')
+    .select(GAME_COLUMNS, { count: 'exact' })
+    .eq('status', 'finished')
+    .order('updated_at', { ascending: false })
+    .range(from, from + perPage - 1);
+  if (error) throw error;
+  return { games: (data ?? []).map(withSortedSeats), total: count ?? 0 };
+}
+
+/**
  * Ids of the tables this player has sat at, most recent first.
  *
  * Two steps, because filtering a parent by a child column needs an inner join
@@ -116,21 +194,6 @@ async function mySeatGameIds(userId) {
     .limit(200);
   if (error) throw error;
   return (data ?? []).map((s) => s.game_id);
-}
-
-export async function listMyGames(userId, limit = 10) {
-  const ids = await mySeatGameIds(userId);
-  if (ids.length === 0) return [];
-
-  const { data, error } = await supabase
-    .from('games')
-    .select(GAME_COLUMNS)
-    .in('id', ids)
-    .eq('status', 'finished')
-    .order('created_at', { ascending: false })
-    .limit(limit);
-  if (error) throw error;
-  return (data ?? []).map(withSortedSeats);
 }
 
 /** Games this player is seated at that are still being played, latest move first. */
@@ -176,7 +239,7 @@ export function isTooEarlyError(error) {
 }
 
 /**
- * Report the result. The database recalculates every rating itself — the
+ * Report the result. The database works out every rating change itself — the
  * client never sends a rating or a delta.
  */
 export async function finishGame(gameId, durakSeat) {

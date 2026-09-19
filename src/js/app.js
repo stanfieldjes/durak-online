@@ -5,12 +5,14 @@
  *   #/                 lobby (or the sign-in panel when signed out)
  *   #/game/:id         a table
  *   #/leaderboard      ranks
+ *   #/account          your name and picture
  */
 import { $, $$, show, toast } from './ui.js';
 import { loadSession, onAuthChange, initAuthView, renderWhoami, session } from './auth.js';
 import { initLobby, enterLobby, leaveLobby } from './lobby.js';
 import { initGame, enterGame, leaveGame } from './game.js';
 import { enterLeaderboard } from './leaderboard.js';
+import { initAccount, enterAccount } from './account.js';
 import { initSound } from './sound.js';
 
 let current = null;
@@ -20,6 +22,7 @@ function parseRoute() {
   const parts = hash.split('/').filter(Boolean);
   if (parts[0] === 'game' && parts[1]) return { name: 'game', id: parts[1] };
   if (parts[0] === 'leaderboard') return { name: 'leaderboard' };
+  if (parts[0] === 'account') return { name: 'account' };
   return { name: 'lobby' };
 }
 
@@ -62,6 +65,11 @@ async function route() {
       current = 'leaderboard';
       await enterLeaderboard();
       break;
+    case 'account':
+      showPanel('account');
+      current = 'account';
+      await enterAccount();
+      break;
     default:
       showPanel('lobby');
       current = 'lobby';
@@ -81,6 +89,7 @@ async function boot() {
   initAuthView(() => { location.hash = '#/'; route(); });
   initLobby();
   initGame();
+  initAccount();
   renderWhoami();
 
   onAuthChange(() => {

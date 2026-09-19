@@ -10,8 +10,11 @@
   </nav>
 
   <div class="whoami" id="whoami" hidden>
-    <span class="whoami__name" id="whoami-name"></span>
-    <span class="whoami__elo" id="whoami-elo"></span>
+    <a class="whoami__me" href="#/account" data-link>
+      <span id="whoami-avatar"></span>
+      <span class="whoami__name" id="whoami-name"></span>
+    </a>
+    <span class="whoami__rating" id="whoami-rating"></span>
     <button type="button" class="btn btn--quiet" id="sign-out">Sign out</button>
   </div>
 </header>

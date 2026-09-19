@@ -1,0 +1,28 @@
+<section class="panel panel--account" data-route="account" hidden>
+  <h1 class="display">You</h1>
+
+  <div class="account">
+    <div class="account__face">
+      <span id="account-avatar"></span>
+      <div class="account__face-actions">
+        <label class="btn" for="avatar-file">Choose a picture</label>
+        <input type="file" id="avatar-file" accept="image/png,image/jpeg,image/webp,image/gif"
+               class="sr-only">
+        <button type="button" class="btn btn--quiet" id="avatar-remove" hidden>Remove</button>
+      </div>
+      <p class="hint">PNG, JPEG, WebP or GIF, up to 2MB. It is shown to everyone.</p>
+    </div>
+
+    <form class="account__name" id="account-name-form" novalidate>
+      <label class="field">
+        <span>Name at the table</span>
+        <input type="text" name="name" autocomplete="nickname" maxlength="40"
+               placeholder="3-20 characters">
+      </label>
+      <p class="hint">Any script you like — Дурак and 田中 are names like any other.</p>
+      <button type="submit" class="btn btn--primary" id="account-name-save">Save</button>
+    </form>
+  </div>
+
+  <p class="account__note" id="account-note" role="status" hidden></p>
+</section>

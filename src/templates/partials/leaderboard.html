@@ -6,17 +6,18 @@
         <th scope="col" class="ranks__place">#</th>
         <th scope="col">Player</th>
         <th scope="col">Games</th>
-        <th scope="col">Durak</th>
-        <th scope="col">Expected</th>
         <th scope="col">
           <span class="th-info">
-            Score
-            <button type="button" class="info" aria-describedby="score-tip">
+            Rating
+            <button type="button" class="info" aria-describedby="rating-tip">
               <span aria-hidden="true">i</span>
-              <span class="sr-only">Score Calculation</span>
+              <span class="sr-only">How the rating works</span>
             </button>
-            <span class="tip" id="score-tip" role="tooltip">
-              score = (expected durak rate &minus; actual durak rate) &times; 100
+            <span class="tip" id="rating-tip" role="tooltip">
+              Everyone starts at 1000. Every game moves 24 points between the durak
+              and the rest of the table, split by how likely each player was to be
+              the one left holding cards. Losing at a bigger table costs more, and
+              losing to weaker players costs more again.
             </span>
           </span>
         </th>
@@ -24,7 +25,6 @@
     </thead>
     <tbody id="ranks-body"></tbody>
   </table>
- 
+
   <p class="empty" id="no-ranks" hidden>No finished games yet.</p>
 </section>
- 

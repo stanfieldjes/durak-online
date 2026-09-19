@@ -4,15 +4,18 @@ import {
   abandonGame,
   leaveTable,
   listTables,
-  listMyGames,
+  listRecentGames,
   listActiveGames,
   watchLobby,
+  RECENT_PER_PAGE,
 } from './db.js';
 import { readableError } from './supabase.js';
-import { session, scoreOf } from './auth.js';
+import { session, ratingOf } from './auth.js';
 import { newGame, openSlots } from './durak.js';
-import { formatScore } from './score.js';
-import { $, show, setText, clear, toast, relativeTime, deltaClass } from './ui.js';
+import { formatRating } from './rating.js';
+import {
+  $, show, setText, clear, toast, relativeTime, playerEl, avatarEl, paintDelta,
+} from './ui.js';
 
 /**
  * How often a visible lobby re-reads the table list on its own. Realtime
@@ -24,16 +27,27 @@ let unwatch = null;
 let refreshTimer = null;
 let pollTimer = null;
 let refreshSeq = 0;   // only the newest refresh gets to draw
+let recentSeq = 0;    // the same, for the recent games list
 let myTable = null;   // the waiting table I am sitting at, if any
+let recentPage = 0;   // which page of finished games is on screen
+let recentTotal = 0;
 
 export function initLobby() {
   $('#create-game').addEventListener('click', onCreate);
-  $('#refresh-games').addEventListener('click', refresh);
+  $('#refresh-games').addEventListener('click', () => { refresh(); refreshRecent(); });
+  $('#recent-prev').addEventListener('click', () => turnTo(recentPage - 1));
+  $('#recent-next').addEventListener('click', () => turnTo(recentPage + 1));
 }
 
 function refreshSoon() {
   clearTimeout(refreshTimer);
-  refreshTimer = setTimeout(refresh, 350); // coalesce bursts of row changes
+  refreshTimer = setTimeout(() => {
+    refresh();
+    // Games finishing elsewhere change this list, but only while the reader is
+    // looking at the newest page. Somebody paging back through the history
+    // should not have the ground move under them.
+    if (recentPage === 0) refreshRecent();
+  }, 350); // coalesce bursts of row changes
 }
 
 /** Back in view or back online: the list may have changed while we were away. */
@@ -42,7 +56,9 @@ function onWake() {
 }
 
 export function enterLobby() {
+  recentPage = 0;
   refresh();
+  refreshRecent();
   // Each SUBSCRIBED, including rejoins after a dropped connection, re-reads the
   // list, since realtime does not replay what it missed while disconnected.
   unwatch = watchLobby(refreshSoon, (status) => {
@@ -62,6 +78,7 @@ export function leaveLobby() {
   clearInterval(pollTimer);
   pollTimer = null;
   refreshSeq++; // drop any refresh still in flight
+  recentSeq++;
   document.removeEventListener('visibilitychange', onWake);
   window.removeEventListener('online', onWake);
 }
@@ -136,15 +153,13 @@ export async function refresh() {
   if (!session.user) return;
   const seq = ++refreshSeq;
   try {
-    const [tables, active, mine] = await Promise.all([
+    const [tables, active] = await Promise.all([
       listTables(),
       listActiveGames(session.user.id),
-      listMyGames(session.user.id),
     ]);
     if (seq !== refreshSeq) return; // a newer refresh started while this one was out
     renderActive(active);
     renderTables(tables);
-    renderHistory(mine);
   } catch (error) {
     if (seq === refreshSeq) toast(readableError(error));
   }
@@ -244,12 +259,12 @@ function openTableRow(game) {
 
   const name = document.createElement('span');
   name.className = 'row__name';
-  name.textContent = host?.username ?? 'Someone';
+  name.append(playerEl(host, { size: 'sm', fallback: 'Someone' }));
 
   const meta = document.createElement('span');
   meta.className = 'row__meta';
   meta.textContent = [
-    formatScore(scoreOf(host)),
+    host ? `rated ${formatRating(ratingOf(host))}` : null,
     `${seated} of ${game.max_players} seated`,
     names.length ? `with ${names.join(', ')}` : null,
     `opened ${relativeTime(game.created_at)}`,
@@ -326,34 +341,115 @@ function renderMyTable(game) {
   box.append(text, link, btn);
 }
 
-function renderHistory(games) {
+/* ------------------------------------------------------------------ */
+/* recent games                                                        */
+/* ------------------------------------------------------------------ */
+
+function turnTo(page) {
+  const lastPage = Math.max(0, Math.ceil(recentTotal / RECENT_PER_PAGE) - 1);
+  const next = Math.min(Math.max(0, page), lastPage);
+  if (next === recentPage) return;
+  recentPage = next;
+  refreshRecent();
+}
+
+async function refreshRecent() {
+  if (!session.user) return;
+  const seq = ++recentSeq;
+  try {
+    const { games, total } = await listRecentGames({ page: recentPage });
+    if (seq !== recentSeq) return;
+
+    // Games can be deleted, or the last one on a page can move to the page
+    // before while somebody is looking at it. Rather than show an empty list,
+    // step back to the last page that has anything on it.
+    if (games.length === 0 && total > 0 && recentPage > 0) {
+      recentPage = Math.max(0, Math.ceil(total / RECENT_PER_PAGE) - 1);
+      refreshRecent();
+      return;
+    }
+
+    recentTotal = total;
+    renderRecent(games);
+    renderPager();
+  } catch (error) {
+    if (seq === recentSeq) toast(readableError(error));
+  }
+}
+
+/**
+ * Every finished game on the site, not only your own: who was left holding
+ * the cards, who else was at the table, and what the game did to your rating
+ * if you were at it.
+ */
+function renderRecent(games) {
   const list = $('#recent-games');
   clear(list);
-  show($('#no-history'), games.length === 0);
+  show($('#no-history'), games.length === 0 && recentTotal === 0);
 
   for (const game of games) {
-    const delta = game.score_delta?.[session.user.id];
-    const numeric = delta === undefined || delta === null ? null : Number(delta);
-    const opponents = (game.players ?? [])
-      .filter((p) => p.player_id !== session.user.id)
-      .map((p) => p.profile?.username ?? 'unknown');
+    const seats = game.players ?? [];
+    const durak = seats.find((p) => p.player_id === game.durak_id)?.profile ?? null;
+    const iPlayed = seats.some((p) => p.player_id === session.user.id);
+    const raw = game.rating_delta?.[session.user.id];
+    const mine = raw === undefined || raw === null ? null : Number(raw);
 
     const li = document.createElement('li');
+    if (game.durak_id === session.user.id) li.classList.add('is-my-loss');
+    else if (iPlayed) li.classList.add('is-mine');
 
-    const outcome = document.createElement('span');
-    outcome.className = 'row__name';
-    if (!game.durak_id) outcome.textContent = 'Draw';
-    else outcome.textContent = game.durak_id === session.user.id ? 'Durak' : 'Got out';
+    const who = document.createElement('span');
+    who.className = 'history__who';
+    if (!game.durak_id) {
+      const draw = document.createElement('span');
+      draw.className = 'history__draw';
+      draw.textContent = 'Draw';
+      who.append(draw);
+    } else {
+      who.append(avatarEl(durak, { size: 'sm' }));
+      const name = document.createElement('span');
+      name.className = 'history__name';
+      name.textContent = game.durak_id === session.user.id
+        ? 'You'
+        : durak?.username ?? 'Someone';
+      const verb = document.createElement('span');
+      verb.className = 'history__verb';
+      verb.textContent = game.durak_id === session.user.id ? 'were the durak' : 'was the durak';
+      who.append(name, verb);
+    }
+
+    const others = seats
+      .filter((p) => p.player_id !== game.durak_id)
+      .map((p) => p.profile?.username ?? 'unknown');
 
     const meta = document.createElement('span');
-    meta.className = 'row__meta';
-    meta.textContent = `vs ${opponents.join(', ') || 'nobody'} · ${relativeTime(game.created_at)}`;
+    meta.className = 'row__meta history__meta';
+    meta.textContent = [
+      `${seats.length} players`,
+      others.length ? `over ${others.join(', ')}` : null,
+      relativeTime(game.updated_at ?? game.created_at),
+    ].filter(Boolean).join(' · ');
 
-    const d = document.createElement('span');
-    d.className = `delta ${deltaClass(numeric)}`;
-    d.textContent = formatScore(numeric);
+    const delta = document.createElement('span');
+    delta.className = 'delta history__delta';
+    if (iPlayed) {
+      paintDelta(delta, mine ?? 0);
+    } else {
+      // You were not at this table, so it did nothing to your rating.
+      delta.classList.add('delta--flat');
+      delta.textContent = 'n/a';
+      delta.title = 'You were not at this table';
+    }
 
-    li.append(outcome, meta, d);
+    li.append(who, meta, delta);
     list.append(li);
   }
+}
+
+function renderPager() {
+  const pages = Math.max(1, Math.ceil(recentTotal / RECENT_PER_PAGE));
+  show($('#recent-pager'), recentTotal > RECENT_PER_PAGE);
+  setText($('#recent-page'), `Page ${recentPage + 1} of ${pages}`);
+  $('#recent-prev').disabled = recentPage <= 0;
+  $('#recent-next').disabled = recentPage >= pages - 1;
 }

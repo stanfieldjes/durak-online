@@ -1,8 +1,8 @@
 import { getLeaderboard } from './db.js';
 import { readableError } from './supabase.js';
 import { session } from './auth.js';
-import { formatScore, formatRate } from './score.js';
-import { $, show, clear, toast } from './ui.js';
+import { formatRating } from './rating.js';
+import { $, show, clear, toast, playerEl } from './ui.js';
 
 export async function enterLeaderboard() {
   const body = $('#ranks-body');
@@ -11,42 +11,43 @@ export async function enterLeaderboard() {
     const rows = await getLeaderboard();
     show($('#no-ranks'), rows.length === 0);
 
-    // The view already orders by score, so position in the list is the rank.
-    // Equal scores share a place rather than being separated arbitrarily.
+    // The view already orders by rating, so a row's position in the list is
+    // its place. Equal ratings share a place rather than being separated
+    // arbitrarily — which, with everyone starting on the same number, is
+    // exactly what the first few games look like.
     let place = 0;
-    let previousScore = null;
+    let previous = null;
 
     rows.forEach((row, index) => {
-      if (row.score !== previousScore) {
+      const rating = formatRating(row.rating);
+      if (rating !== previous) {
         place = index + 1;
-        previousScore = row.score;
+        previous = rating;
       }
 
       const tr = document.createElement('tr');
       if (session.user && row.id === session.user.id) tr.classList.add('is-me');
 
-      for (const [value, cls] of [
-        [String(place), 'ranks__place'],
-        [row.username, ''],
-        [String(row.games), 'ranks__muted'],
-        [formatRate(row.durak_rate), ''],
-        [formatRate(row.expected_rate), 'ranks__muted'],
-        [formatScore(row.score), scoreClass(row.score)],
-      ]) {
-        const td = document.createElement('td');
-        if (cls) td.className = cls;
-        td.textContent = value;
-        tr.append(td);
-      }
+      const placeCell = document.createElement('td');
+      placeCell.className = 'ranks__place';
+      placeCell.textContent = String(place);
+
+      const nameCell = document.createElement('td');
+      nameCell.className = 'ranks__player';
+      nameCell.append(playerEl(row, { size: 'sm' }));
+
+      const gamesCell = document.createElement('td');
+      gamesCell.className = 'ranks__muted';
+      gamesCell.textContent = String(row.games);
+
+      const ratingCell = document.createElement('td');
+      ratingCell.className = 'ranks__rating';
+      ratingCell.textContent = rating;
+
+      tr.append(placeCell, nameCell, gamesCell, ratingCell);
       body.append(tr);
     });
   } catch (error) {
     toast(readableError(error));
   }
-}
-
-function scoreClass(score) {
-  const n = Number(score);
-  if (!n) return 'ranks__score';
-  return `ranks__score ${n > 0 ? 'delta--up' : 'delta--down'}`;
 }

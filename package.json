@@ -8,6 +8,7 @@
     "build": "python3 build.py",
     "dev": "python3 build.py --serve",
     "watch": "python3 build.py --watch",
-    "test": "node tests/engine.test.mjs && node tests/sync.test.mjs"
+    "test": "node tests/engine.test.mjs && node tests/sync.test.mjs && node --test tests/rating.test.mjs tests/markup.test.mjs",
+    "test:sql": "bash tests/sql/run.sh"
   }
 }

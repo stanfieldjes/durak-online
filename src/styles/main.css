@@ -141,13 +141,62 @@ body {
   border-left: 1px solid var(--rail-line);
 }
 
-.whoami__name { font-weight: 500; }
-.whoami__elo { font-variant-numeric: tabular-nums; font-weight: 500; }
+/* Your own name and picture are the way in to changing either. */
+.whoami__me {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  color: inherit;
+  text-decoration: none;
+  border-radius: 999px;
+}
 
-/* A score's colour follows its sign. See paintScore() in ui.js. */
-.score--up { color: var(--green-bright); }
-.score--down { color: var(--score-down); }
-.score--even { color: var(--chalk); }
+.whoami__me:hover { color: #fff; }
+.whoami__name { font-weight: 500; }
+.whoami__rating { font-variant-numeric: tabular-nums; font-weight: 500; color: var(--chalk-rail); }
+
+/* ---------- players ---------- */
+
+/*
+  A player's picture, or the first letter of their name on a colour of their
+  own when they have not set one. The letter is the fallback in two senses:
+  for players without a picture, and for a picture that fails to load, which
+  ui.js swaps out rather than leaving a broken image at the table.
+*/
+.avatar {
+  --avatar-size: 1.7rem;
+  --avatar-hue: 0;
+  flex: 0 0 auto;
+  width: var(--avatar-size);
+  height: var(--avatar-size);
+  border-radius: 50%;
+  overflow: hidden;
+  display: inline-grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  font-size: calc(var(--avatar-size) * 0.46);
+  font-weight: 700;
+  line-height: 1;
+  /* A name in a script with tall glyphs should not push the circle around. */
+  text-transform: none;
+  user-select: none;
+}
+
+.avatar img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.avatar--letter {
+  background: hsl(var(--avatar-hue) 45% 32%);
+  color: hsl(var(--avatar-hue) 70% 88%);
+}
+
+.avatar--xs { --avatar-size: 1.25rem; }
+.avatar--sm { --avatar-size: 1.7rem; }
+.avatar--lg { --avatar-size: 5.5rem; font-size: 2.4rem; }
+
+/* A picture and a name side by side. */
+.player-chip { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.player-chip__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---------- layout ---------- */
 
@@ -256,6 +305,7 @@ body {
 
 .btn--quiet { color: var(--chalk-rail); border-color: transparent; }
 .btn--quiet:hover { color: var(--chalk); }
+.btn--quiet:disabled { color: #4c5a52; border-color: transparent; }
 
 .field { display: block; margin-bottom: 0.9rem; }
 
@@ -310,6 +360,35 @@ body {
   padding: clamp(1.25rem, 3vw, 1.75rem);
 }
 
+/* ---------- account ---------- */
+
+.panel--account { display: grid; gap: 1.5rem; }
+
+.account {
+  display: grid;
+  grid-template-columns: auto minmax(0, 22rem);
+  gap: clamp(1.5rem, 5vw, 3rem);
+  align-items: start;
+  background: var(--rail-2);
+  border: 1px solid var(--rail-line);
+  border-radius: var(--radius);
+  padding: clamp(1.25rem, 3vw, 1.75rem);
+}
+
+.account__face { display: grid; justify-items: center; gap: 0.7rem; }
+.account__face-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: center; }
+.account__face .hint { text-align: center; max-width: 18ch; }
+
+/* The file input itself is hidden (.sr-only) and its label is the button, so
+   the control looks like every other button on the site. */
+.account__face-actions label.btn { cursor: pointer; }
+
+.account__name { display: grid; gap: 0.2rem; justify-items: start; }
+.account__name .hint { margin: 0 0 0.6rem; }
+
+.account__note { font-size: var(--step--1); color: var(--green-bright); margin: 0; }
+.account__note.is-bad { color: var(--red-soft); }
+
 /* ---------- lobby ---------- */
 
 .panel--lobby { display: grid; gap: 2.5rem; }
@@ -346,13 +425,8 @@ body {
    so the two kinds of row are told apart at a glance. */
 .tables li.is-live { box-shadow: inset 3px 0 0 var(--red); }
 
-.row__name { font-weight: 500; }
+.row__name { font-weight: 500; display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .row__meta { color: var(--chalk-rail); font-size: var(--step--1); font-variant-numeric: tabular-nums; }
-
-.history .delta { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 500; }
-.delta--up { color: var(--green-bright); }
-.delta--down { color: var(--red-soft); }
-.delta--flat { color: var(--chalk-rail); }
 
 .lobby__rule { margin: 0 0 1.1rem; }
 
@@ -367,6 +441,46 @@ body {
 
 .my-table .btn { font-size: var(--step-0); }
 a.btn { display: inline-block; text-decoration: none; }
+
+/* ---------- recent games ---------- */
+
+/*
+  Every finished game on the site, not only your own. A game you were at is
+  marked down the left edge — green if you got out, red if you were the one
+  left holding the cards — so your own history still stands out of the feed.
+*/
+.history li.is-mine { box-shadow: inset 3px 0 0 var(--green-bright); }
+.history li.is-my-loss { box-shadow: inset 3px 0 0 var(--red); }
+
+.history__who { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.history__name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.history__verb { color: var(--chalk-rail); font-size: var(--step--1); white-space: nowrap; }
+.history__draw { font-weight: 500; color: var(--chalk-rail); }
+.history__meta { margin-left: 0.4rem; }
+
+.history .delta { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 500; }
+.delta--up { color: var(--green-bright); }
+.delta--down { color: var(--red-soft); }
+.delta--flat { color: var(--chalk-rail); }
+
+/* Not your game, so it did nothing to your rating. Quieter than a zero. */
+.history__delta { white-space: nowrap; }
+
+.pager {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.8rem;
+  margin-top: 0.9rem;
+}
+
+.pager__count {
+  color: var(--chalk-rail);
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+  min-width: 10ch;
+  text-align: center;
+}
 
 /* ---------- waiting room ---------- */
 
@@ -388,7 +502,7 @@ a.btn { display: inline-block; text-decoration: none; }
 
 .seat {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.6rem;
   padding: 0.6rem 0.8rem;
   background: var(--rail-2);
@@ -403,8 +517,8 @@ a.btn { display: inline-block; text-decoration: none; }
 }
 
 .seat--empty { color: var(--chalk-rail); font-style: italic; }
-.seat__name { font-weight: 500; }
-.seat__rating { margin-left: auto; font-variant-numeric: tabular-nums; }
+.seat__name { font-weight: 500; display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+.seat__rating { margin-left: auto; font-variant-numeric: tabular-nums; color: var(--chalk-rail); }
 
 /* The seat list, with the deck this table would play with beside it. */
 .waiting__row {
@@ -589,7 +703,6 @@ a.btn { display: inline-block; text-decoration: none; }
 .btn--corner { padding: 0.3rem 0.7rem; color: rgba(255, 255, 255, 0.6); }
 .btn--corner:hover { color: #fff; background: rgba(0, 0, 0, 0.25); }
 
-/* All opponents sit in one row across the top, with your own hand below. */
 /* Opponents sit in a row across the top, in seat order from your left.
    --seats is however many are up there (game.js sets it), so they share the
    width evenly. */
@@ -643,10 +756,11 @@ a.btn { display: inline-block; text-decoration: none; }
 
 .player--out { border-color: #0a2e1d; background: rgba(0, 0, 0, 0.45); color: #6e837a; }
 .player--out .player__rating, .player--out .player__role { color: #6e837a; }
+.player--out .avatar { opacity: 0.5; }
 
-.player__head { display: flex; align-items: baseline; gap: 0.4rem; flex-wrap: wrap; }
-.player__name { font-weight: 500; }
-.player__rating { font-variant-numeric: tabular-nums; font-size: var(--step--1); }
+.player__head { display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap; }
+.player__name { font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player__rating { font-variant-numeric: tabular-nums; font-size: var(--step--1); color: var(--chalk-dim); }
 .player__role { margin-left: auto; font-size: var(--step--1); color: var(--chalk-dim); }
 .player--defending .player__role { color: var(--chalk); }
 .player--attacking .player__role { color: var(--red-soft); }
@@ -1061,17 +1175,20 @@ button.card.is-selected {
 }
 
 .result__title { font-size: var(--step-3); margin: 0; }
-.result__elo {
+
+/* What this game did to your own rating, in the delta's own colour. */
+.result__delta {
   color: var(--chalk-dim);
   font-size: var(--step-1);
   font-variant-numeric: tabular-nums;
   margin: 0 0 1rem;
 }
 
-/* Higher specificity than .result__elo, which sets the base colour. */
-.result__elo.score--up { color: var(--green-bright); }
-.result__elo.score--down { color: var(--score-down); }
-.result__elo.score--even { color: var(--chalk); }
+/* Two classes, so these beat the base colour above rather than losing to it
+   on source order — paintDelta() puts one of them on this same element. */
+.result__delta.delta--up { color: var(--green-bright); }
+.result__delta.delta--down { color: var(--score-down); }
+.result__delta.delta--flat { color: var(--chalk); }
 
 .result__table {
   list-style: none;
@@ -1079,23 +1196,36 @@ button.card.is-selected {
   padding: 0;
   display: grid;
   gap: 0.35rem;
-  width: min(22rem, 100%);
+  width: min(24rem, 100%);
   font-variant-numeric: tabular-nums;
 }
 
 .result__table li {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 0.6rem;
   padding: 0.35rem 0.6rem;
   border-bottom: 1px solid var(--rail-line);
 }
 
-.result__name { margin-right: auto; text-align: left; }
-.result__score { min-width: 3ch; text-align: right; }
-.result__change { min-width: 5ch; text-align: right; }
+.result__name {
+  margin-right: auto;
+  text-align: left;
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+/* The rating a player now sits at, shown plain, and beside it what this game
+   did to it, which is the part with a direction and so the part with a
+   colour. Someone can sit at 1140 overall and still have just lost 18. */
+.result__rating { min-width: 4ch; text-align: right; }
+.result__change { min-width: 6ch; text-align: right; }
 
 .result__table li.is-durak { color: var(--red-soft); font-weight: 500; }
+
+.result__buttons { display: flex; gap: 0.6rem; flex-wrap: wrap; justify-content: center; }
 
 /* ---------- ranks ---------- */
 
@@ -1120,11 +1250,16 @@ button.card.is-selected {
 
 .ranks tbody .ranks__place { font-weight: 500; color: var(--chalk); }
 
-/* Games played and the expected rate are context for the score, not the
-   point of the table, so they sit back a little. */
+/* The player column carries a picture, so it reads left to right like a name
+   rather than being pushed to the right like a number. */
+.ranks td.ranks__player { text-align: left; }
+.ranks th:nth-child(2) { text-align: left; }
+
+/* Games played is context for the rating, not the point of the table, so it
+   sits back a little. */
 .ranks__muted { color: var(--chalk-rail); }
 
-.ranks__score { font-weight: 700; }
+.ranks__rating { font-weight: 700; }
 
 /*
   Info icon and its tooltip. Shown on hover for a pointer, and on focus so it
@@ -1229,6 +1364,8 @@ button.card.is-selected {
 
 @media (max-width: 44rem) {
   .panel--auth { grid-template-columns: 1fr; }
+  .account { grid-template-columns: 1fr; justify-items: center; }
+  .account__name { justify-self: stretch; }
 
   /* Fan out into rows instead of overlapping, so tapping one card never hides
      the ones beside it. */
@@ -1258,6 +1395,11 @@ button.card.is-selected {
   .opponents--top { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .opponents--side { width: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .player__role { margin-left: 0; width: 100%; }
+
+  /* A game in the feed wraps rather than squeezing the names. */
+  .history li { flex-wrap: wrap; }
+  .history__meta { width: 100%; margin-left: 0; }
+  .history .delta { margin-left: auto; }
 }
 
 @media (prefers-reduced-motion: reduce) {
