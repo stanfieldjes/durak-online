@@ -114,13 +114,19 @@ create index if not exists game_players_player_idx on public.game_players (playe
 alter table public.games enable row level security;
 alter table public.game_players enable row level security;
 
--- Open tables are visible to everyone so the lobby can list them; otherwise
--- you only see games you are sitting at.
+-- Open and running tables are visible to everyone, so the lobby can list them
+-- and anyone can watch a game in progress; finished games stay private to the
+-- people who played them.
+--
+-- A running game's row carries the whole position, every hand included, so
+-- anyone signed in can read the cards of a game they are watching. That is
+-- deliberate — spectators are meant to see them — but it does mean a player
+-- could open another table's position in devtools. See README, "Trust model".
 drop policy if exists "read open or own games" on public.games;
 create policy "read open or own games"
   on public.games for select
   using (
-    status = 'waiting'
+    status in ('waiting', 'active')
     or exists (
       select 1 from public.game_players gp
       where gp.game_id = games.id and gp.player_id = auth.uid()
@@ -665,5 +671,24 @@ grant execute on function public.leave_table(uuid)                to authenticat
 
 -- Lets the browser subscribe to tables and seats. RLS still applies to the
 -- stream, so you only receive rows you are allowed to read.
-alter publication supabase_realtime add table public.games;
-alter publication supabase_realtime add table public.game_players;
+--
+-- Adding a table that is already published is an error, and the SQL editor
+-- runs this file as one transaction, so that error would roll back
+-- everything above it. Add each table only if it is not there yet.
+do $$
+begin
+  if not exists (
+    select 1 from pg_publication_tables
+     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'games'
+  ) then
+    alter publication supabase_realtime add table public.games;
+  end if;
+
+  if not exists (
+    select 1 from pg_publication_tables
+     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'game_players'
+  ) then
+    alter publication supabase_realtime add table public.game_players;
+  end if;
+end
+$$;

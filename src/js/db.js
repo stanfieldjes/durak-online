@@ -85,13 +85,18 @@ export async function getGame(gameId) {
   return withSortedSeats(data);
 }
 
-export async function listOpenGames() {
+/**
+ * Tables to show in the lobby: those waiting for players and those being
+ * played right now, newest first. A running table cannot be joined, but it
+ * can be watched.
+ */
+export async function listTables(limit = 30) {
   const { data, error } = await supabase
     .from('games')
     .select(GAME_COLUMNS)
-    .eq('status', 'waiting')
+    .in('status', ['waiting', 'active'])
     .order('created_at', { ascending: false })
-    .limit(20);
+    .limit(limit);
   if (error) throw error;
   return (data ?? []).map(withSortedSeats);
 }

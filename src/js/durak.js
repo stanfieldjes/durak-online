@@ -1,5 +1,4 @@
 /**
- * Durak rules engine — 2 to 4 players, podkidnoy (throw-in) variant, 36 cards.
  *
  * Pure and dependency-free on purpose: no DOM, no network, no imports.
  * The same file can be dropped into a Supabase Edge Function to validate
@@ -37,15 +36,17 @@
 
 export const SUITS = ['S', 'H', 'D', 'C'];
 /**
- * Every rank there can be, lowest first. A table of four or fewer plays the
- * usual 36-card deck, from sixes up. Each seat past the fourth adds the next
- * rank down — fives at five players, fours at six, and so on to a full
- * 52-card deck at eight — so there are always six cards a head to deal plus a
- * stock to draw from.
+ * Every rank there can be, lowest first. The deck is cut to the table: four
+ * players get the usual 36 cards, from sixes up, and every seat added or
+ * removed from there moves the bottom rank by one — eights at two players,
+ * sevens at three, fives at five, and so on to a full 52-card deck at eight.
+ * However many are playing, that leaves six cards a head to deal plus a stock
+ * to draw from.
  */
 export const RANKS = ['2', '3', '4', '5', '6', '7', '8', '9', '10', 'J', 'Q', 'K', 'A'];
-/** The lowest rank in a four-player deck; smaller tables use this one too. */
+/** The lowest rank at a four-player table, which the others are measured from. */
 const BASE_RANK = '6';
+const BASE_PLAYERS = 4;
 export const HAND_SIZE = 6;
 export const MAX_SLOTS = 6;
 export const MIN_PLAYERS = 2;
@@ -95,11 +96,13 @@ export function makeRng(seed) {
 
 /** The ranks a table of `playerCount` plays with, lowest first. */
 export function ranksFor(playerCount) {
-  const extra = Math.min(Math.max(playerCount - 4, 0), RANKS.indexOf(BASE_RANK));
-  return RANKS.slice(RANKS.indexOf(BASE_RANK) - extra);
+  const from = RANKS.indexOf(BASE_RANK) + (BASE_PLAYERS - Number(playerCount));
+  // Never past either end: the deck stops at twos, and always keeps enough
+  // ranks for six cards a head.
+  return RANKS.slice(Math.min(Math.max(from, 0), RANKS.length - 1));
 }
 
-/** How many cards that table's deck holds: 36 up to four players, 52 at eight. */
+/** How many cards that table's deck holds: 28 at two players, 36 at four, 52 at eight. */
 export function deckSize(playerCount) {
   return ranksFor(playerCount).length * SUITS.length;
 }

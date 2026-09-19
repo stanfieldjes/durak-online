@@ -1,6 +1,6 @@
 # Durak Online
 
-Durak for 2 to 4 players with a score ladder. The front end is static files on
+Durak for 2 to 8 players with a score ladder. The front end is static files on
 GitHub Pages; Supabase holds accounts, tables, and records. No server to run.
 
 ```
@@ -58,7 +58,19 @@ The workflow runs the tests, builds, and publishes to
 
 ## Rules implemented
 
-36-card deck, six-card hands, lowest trump opens, 2 to 4 players.
+Six-card hands, lowest trump opens, 2 to 8 players.
+
+The deck is cut to the table, so there is always a stock left after dealing
+and never a heap of it. Four players get the usual 36 cards, sixes up, and
+every seat either way moves the bottom rank by one: eights up at two players
+(28 cards), sevens at three (32), fives at five (40), and so on to the full
+52 at eight. `ranksFor()` and `deckSize()` in `durak.js` are the source of
+that.
+
+Nobody is dealt more than four cards of one suit. `newGame()` reshuffles until
+that holds, drawing from the same seeded stream, so a seed still reproduces
+its deal exactly. It gives up after 200 shuffles and deals what it has, which
+in practice never happens: none of 140,000 test deals needed more than a few.
 
 The defender beats each attack with a higher card of the same suit or any trump;
 trumps are beaten only by higher trumps. A defender who cannot or will not beat
@@ -122,11 +134,23 @@ player is eligible to act in roughly a quarter of all positions even at a
 two-player table, and the concurrency test produces around 30,000 collisions —
 every one either replayed cleanly or correctly abandoned.
 
+## Watching a game
+
+Any table being played can be watched from the lobby, which lists open and
+running tables together. Opening one you are not seated at puts you in the
+stands: every hand is face up, there is no hand of your own and nothing to
+press, and the seats spread across the top and bottom of the table. A
+spectator never writes anything — not a move, not the result — so a game
+plays out exactly as it would unwatched.
+
+Watching means seeing the cards, so `schema.sql` lets any signed-in player
+read a running game's row. See "Trust model" for what that gives away.
+
 ## Rating
 
 Every game has exactly one durak, so at a table of *n* players your share of
 the blame is *1/n* — half at a two-player table, a third at three, a quarter at
-four. Add that up across a player's games and you have how often they *should*
+four, and an eighth at a full table of eight. Add that up across a player's games and you have how often they *should*
 have been the durak. Score is the gap between that and how often they actually
 were, in percentage points:
 
@@ -145,9 +169,10 @@ Being the durak 30% of the time then scores **+3**; 48% of the time scores
 predicted.
 
 Bigger tables raise the bar rather than lowering it, since a four-player table
-only expects you to lose a quarter of the time. The same 25% actual rate is
-worth +25 if all your games were heads-up, and exactly par if they were all
-four-handed. Score is a rate, not a total, so playing more games does not
+only expects you to lose a quarter of the time and an eight-player table only
+an eighth. The same 25% actual rate is worth +25 if all your games were
+heads-up, exactly par if they were all four-handed, and −12 if they were all
+eight-handed. Score is a rate, not a total, so playing more games does not
 inflate it — though it does settle down the more you play.
 
 The database stores only the totals: games won, games lost as the durak, and a
@@ -184,7 +209,10 @@ naming yourself is always allowed, which is how conceding works.
    above it stores what you send. Someone with devtools open can post a position
    where they beat an ace with a six.
 2. *Hidden information.* The whole position, including every hand, lives in one
-   `jsonb` column that all players at the table can read.
+   `jsonb` column. Everyone at the table can read it, and so can anyone
+   watching, since spectating is exactly the ability to see those hands. That
+   also means a player could open another running table's position in
+   devtools and read the cards there.
 
 For a ladder among people you know this is usually fine — cheating is visible
 and socially expensive. If you want it airtight, move the engine server-side.
@@ -218,7 +246,7 @@ src/js/sound.js          sound effects, pooled and mutable
 src/audio/               the clips themselves
 src/js/score.js          score model, mirrored by public.score()
 src/js/db.js             every Supabase call lives here
-src/js/game.js           table rendering, input, stale-write retry
+src/js/game.js           table rendering, input, spectating, stale-write retry
 src/js/{app,auth,lobby,leaderboard,ui}.js
 supabase/schema.sql      tables, RLS, RPCs, score maths
 supabase/migration-*.sql run these only if you already ran an older schema.sql
@@ -253,8 +281,22 @@ else's hand is not the table's business; your own hand then slides apart to
 fit it in its sorted place. Opponents' hands and the stock count cards as they
 arrive and leave, not before.
 
-Opponents' hands show at most six cards, with a +N for the rest, sized to
-fit their panel and never past its edge.
+Seats run clockwise around the table on screen, the way play does, so the
+defender is always the next seat round from the attacker to look at as well
+as in the rules. Playing, you are at the bottom: the player to your left
+starts the top row, which fills left to right, and past the fourth the rest
+carry on down the right-hand side back toward you (`TOP_ROW_SEATS` in
+`game.js`). Watching, where the bottom of the table is free, the overflow
+runs along it right to left instead, which is what closes the ring.
+
+Opponents' cards are sized to fit their panel and wrap onto another row every
+six. Each row after the first sits half a card up into the one above, so a
+hand that grows during a long take costs little height; every card's rank and
+suit are in its top corner, so the half left showing is the half worth
+reading.
+
+The durak's hand turns face up the moment the game is decided, before the
+scores come up, so everyone sees what they were left holding.
 
 The stock is a tight stack of face-down cards lying over the trump card,
 which is turned side on and sticks out to the right. The stack always spans

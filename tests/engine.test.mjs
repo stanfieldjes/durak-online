@@ -668,7 +668,8 @@ for (const good of [2, 3, 4, 5, 6, 7, 8]) {
   const size = deckSize(good);
   check(`a table of ${good} deals ${good} hands`, s.hands.length === good);
   check(`a table of ${good} deals six cards each`, s.hands.every((h) => h.length === 6));
-  check(`a table of ${good} plays with ${size} cards`, size === (good > 4 ? 36 + (good - 4) * 4 : 36));
+  // Four players play the usual 36; every seat either way moves it by a rank.
+  check(`a table of ${good} plays with ${size} cards`, size === 36 + (good - 4) * 4);
   check(`a table of ${good} leaves ${size - good * 6} in the stock`, s.deck.length === size - good * 6);
 }
 

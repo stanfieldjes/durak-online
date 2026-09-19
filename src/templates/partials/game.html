@@ -3,7 +3,13 @@
   <div class="waiting" id="waiting" hidden>
     <h1 class="display">Waiting for players</h1>
     <p class="lede" id="waiting-count"></p>
-    <ol class="seat-list" id="seat-list"></ol>
+    <div class="waiting__row">
+      <ol class="seat-list" id="seat-list"></ol>
+      <div class="deck-preview" id="deck-preview">
+        <div class="deck-preview__cards" id="deck-preview-cards"></div>
+        <p class="deck-preview__note" id="deck-preview-note"></p>
+      </div>
+    </div>
     <div class="actions">
       <button type="button" class="btn btn--primary" id="copy-link">Copy the link</button>
       <button type="button" class="btn" id="start-now" hidden>Start with who is here</button>

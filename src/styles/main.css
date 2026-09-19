@@ -342,6 +342,10 @@ body {
 /* A game in progress that is waiting on you. */
 .tables li.is-your-move { box-shadow: inset 3px 0 0 var(--green-bright); }
 
+/* A table being played rather than filling up: marked in the table's own red,
+   so the two kinds of row are told apart at a glance. */
+.tables li.is-live { box-shadow: inset 3px 0 0 var(--red); }
+
 .row__name { font-weight: 500; }
 .row__meta { color: var(--chalk-rail); font-size: var(--step--1); font-variant-numeric: tabular-nums; }
 
@@ -401,6 +405,42 @@ a.btn { display: inline-block; text-decoration: none; }
 .seat--empty { color: var(--chalk-rail); font-style: italic; }
 .seat__name { font-weight: 500; }
 .seat__rating { margin-left: auto; font-variant-numeric: tabular-nums; }
+
+/* The seat list, with the deck this table would play with beside it. */
+.waiting__row {
+  /* The panel sizes its children to their content, so claim the full width
+     here or the deck has nowhere to sit but underneath the list. */
+  width: 100%;
+  max-width: 60rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: clamp(1rem, 4vw, 2.5rem);
+}
+
+.waiting__row .seat-list { flex: 0 1 26rem; }
+
+.deck-preview {
+  --card-w: clamp(38px, 4.5vw, 52px);
+  --card-h: calc(var(--card-w) * 1.45);
+  flex: 1 1 18rem;
+  display: grid;
+  gap: 0.6rem;
+  justify-items: start;
+}
+
+/* Overlapping like a pack spread in the hand, so a rank arriving reads as one
+   more card on the pile rather than the whole row shifting. */
+.deck-preview__cards { display: flex; flex-wrap: wrap; row-gap: 6px; }
+.deck-preview__cards .card { margin-inline: calc(var(--card-w) * -0.22); flex-shrink: 0; }
+.deck-preview__cards .card:first-child { margin-left: 0; }
+
+.deck-preview__note {
+  margin: 0;
+  font-size: var(--step--1);
+  color: var(--chalk-rail);
+  max-width: 34ch;
+}
 
 /* ---------- the table ---------- */
 
@@ -564,7 +604,14 @@ a.btn { display: inline-block; text-decoration: none; }
   align-content: start;
 }
 
-.opponents--side:empty { display: none; }
+/* Watching instead of playing: no hand of your own at the bottom, so the
+   seats that did not fit across the top line up along it. */
+.felt--watching { grid-template-areas: "bar" "top" "middle" "side" "bottom"; }
+/* The same columns as the top row, so the panels line up; game.js places each
+   one, filling from the right so the ring carries on clockwise. */
+.opponents--bottom { grid-template-columns: repeat(var(--seats, 1), minmax(0, 1fr)); }
+
+.opponents:empty { display: none; }
 
 .player {
   /* Opponents' cards size themselves to this panel (see .fan--opponent). */
@@ -703,14 +750,6 @@ a.btn { display: inline-block; text-decoration: none; }
 
 .stock__trump .card { transform: rotate(90deg); }
 
-.player__more {
-  font-size: var(--step--1);
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-  color: var(--chalk);
-  min-height: 1.2em;
-}
-
 /* The empty stock shows the trump suit; red suits in red. */
 .stock__empty {
   position: absolute;
@@ -832,26 +871,34 @@ a.btn { display: inline-block; text-decoration: none; }
 .fan .card { margin-inline: calc(var(--card-w) * -0.18); flex-shrink: 0; }
 .fan--mine { flex-wrap: wrap; row-gap: 6px; }
 
-/* A fan of backs with its +N beside it. The fan takes the middle column, so
-   it stays centred whether or not the count is showing. */
-.hand-row {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
+/* A hand in rows of six. */
+.hand-rows {
+  display: flex;
+  flex-direction: column;
   align-items: center;
-  gap: 0.4rem;
+  min-width: var(--card-w);
+  min-height: var(--card-h);
 }
 
-.hand-row > :last-child { justify-self: start; }
-.hand-row > :first-child,
-.hand-row > :last-child { min-width: 2rem; }
+/* Rows after the first sit half a card up into the one above, the way a hand
+   is squared up in real life. Every card's rank and suit live in its top
+   corner, so the half that stays uncovered is the half worth reading, and a
+   big hand costs far less height than stacked rows would. */
+.hand-rows .fan--opponent + .fan--opponent { margin-top: calc(var(--card-h) * -0.5); }
 
 /*
   Opponents' cards are as large as their panel allows. Six cards overlapping
-  at this spacing take 3.25 card-widths; the rest of the row is kept free for
-  the +N on the right and an equal margin on the left, so the fan stays
-  centred and never runs past the panel's edge. Capped a little under the
-  size of your own cards.
+  at this spacing take 3.25 card-widths, and the rest of the row is left as a
+  margin, so a full row never runs past the panel's edge. Capped a little
+  under the size of your own cards.
 */
+/* Set on the block of rows rather than on one row, so the rows and the block
+   around them agree on how big a card is. The block's min-width and
+   min-height are one card, which is the size and place cards arriving in this
+   hand fly toward (game.js reads them) — with the full-table card size here
+   instead, every panel would be padded out to the height of a card far
+   larger than the ones in it. */
+.hand-rows,
 .fan--opponent {
   --card-w: min(calc(var(--card-base) * 0.8), calc((100cqi - 4.8rem) / 3.25));
   --card-h: calc(var(--card-w) * 1.45);

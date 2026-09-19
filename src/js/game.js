@@ -6,6 +6,7 @@ import {
   canTake,
   canAct,
   canClear,
+  openSlots,
   isQuickClear,
   describe,
   roleOf,
@@ -13,7 +14,10 @@ import {
   cardId,
   rankValue,
   newGame,
+  ranksFor,
+  makeRng,
   HAND_SIZE,
+  MIN_PLAYERS,
   SUITS,
   SUIT_GLYPH,
   SUIT_NAME,
@@ -93,6 +97,7 @@ let sending = false;
 let settling = false;
 let resultShown = false;
 let resultTimer = null;
+let spectating = false; // watching a game we are not seated at
 let dealing = false;    // opening hands still flying out
 let dealPlayed = false; // only deal once per visit to a table
 
@@ -142,8 +147,8 @@ const discarding = new Set();
 const dealt = new Set();
 let quietPartsQueued = false;
 
-/** Most card backs an opponent's fan shows before counting the rest as +N. */
-const FAN_LIMIT = 6;
+/** Most cards in one row of a hand; the rest wrap onto further rows. */
+const ROW_SIZE = 6;
 /**
  * How many opponents sit across the top of the table. On a big table the rest
  * carry on down the right-hand side, in seat order, so the row reads round
@@ -205,11 +210,18 @@ export async function enterGame(gameId) {
     return;
   }
   if (mySeat === null) {
-    if (game.status !== 'waiting') {
-      toast('That game has already started.');
+    // Not our game: a table already being played is one we can watch.
+    if (game.status === 'active') {
+      spectating = true;
+      toast('Watching. Every hand is face up.');
+    } else if (game.status !== 'waiting') {
+      toast('That game has already finished.');
       location.hash = '#/';
       return;
     }
+  }
+
+  if (mySeat === null && !spectating) {
     try {
       const seated = game.players.length;
       const willFill = seated + 1 >= game.max_players;
@@ -391,6 +403,7 @@ function reset() {
   promptBarFor = null;
   stopMotion();
   tableHidden();
+  spectating = false;
   dealPlayed = false;
   announcedThrough = 0;
   game = null;
@@ -665,8 +678,10 @@ function planMoves(previous, next) {
 /** The opening deal: one card at a time, round by round, starting with you. */
 function planDeal(next) {
   if (reducedMotion()) return [];
+  // Dealt round by round starting with you, or from seat 0 when watching.
+  const first = spectating ? 0 : mySeat;
   const order = [];
-  for (let i = 0; i < next.playerCount; i++) order.push((mySeat + i) % next.playerCount);
+  for (let i = 0; i < next.playerCount; i++) order.push((first + i) % next.playerCount);
 
   const flights = [];
   let k = 0;
@@ -806,10 +821,14 @@ function handTarget(seat) {
   return () => opponentHandBox(seat);
 }
 
-/** The middle of an opponent's hand: where their cards arrive and leave from. */
+/**
+ * The middle of an opponent's hand: where their cards arrive and leave from.
+ * The whole block of rows, not one row, so a card flies to the middle of the
+ * hand however many rows it has grown to.
+ */
 function opponentHandBox(seat) {
   const panel = seatPanel(seat);
-  return fanCentreBox(panel?.querySelector('.fan--opponent')) ?? boxOf(panel);
+  return fanCentreBox(panel?.querySelector('.hand-rows')) ?? boxOf(panel);
 }
 
 /** The card on top of the stock, which is the one that gets drawn. */
@@ -829,7 +848,7 @@ function stockTopBox() {
  * without waiting for the network or for an animation to finish.
  */
 function play(move) {
-  if (!state || state.finished) return;
+  if (!state || state.finished || spectating) return;
   if (!canAct(state, mySeat)) {
     toast('You cannot act right now.');
     return;
@@ -994,7 +1013,9 @@ async function maybeSettle() {
   // time on top of the first.
   settling = true;
 
-  if (game.status !== 'finished' && state?.finished) {
+  // A spectator has no seat, so no business writing the result. Whoever is
+  // playing settles it; we just wait for the row to say so.
+  if (!spectating && game.status !== 'finished' && state?.finished) {
     try {
       await finishGame(game.id, state.draw ? -1 : state.durak);
     } catch (error) {
@@ -1111,7 +1132,10 @@ function render() {
   renderOpponents();
   renderStock();
   renderSlots();
-  renderHand();
+  // A spectator has no hand of their own and nothing to press.
+  show($('#my-hand'), !spectating);
+  show($('#act-take'), false);
+  if (!spectating) renderHand();
   renderPrompt();
   renderActions();
   tableShown();
@@ -1151,25 +1175,86 @@ function renderWaiting() {
     list.append(li);
   }
 
+  renderDeckPreview(seated);
+
   show($('#start-now'), game.host_id === session.user.id && seated >= 2 && seated < game.max_players);
+}
+
+/**
+ * The deck this table would play with, one card per rank it holds.
+ *
+ * The deck is cut to the table, so the row grows as people sit down: eights
+ * up at two players, and a rank lower with every arrival, to the full pack at
+ * eight. The suits are for show — a deck has all four of each rank — so they
+ * are picked from the table's own seed, which keeps them from reshuffling
+ * themselves every time the list redraws and shows everyone the same row.
+ */
+function renderDeckPreview(seated) {
+  const players = Math.max(seated, MIN_PLAYERS);
+  const ranks = ranksFor(players);
+
+  const box = $('#deck-preview-cards');
+  clear(box);
+  const suitFor = makeRng(Number(game.seed) + players);
+  for (const rank of ranks) {
+    box.append(cardEl({ r: rank, s: SUITS[Math.floor(suitFor() * SUITS.length)] }));
+  }
+
+  const count = ranks.length * SUITS.length;
+  setText(
+    $('#deck-preview-note'),
+    seated < MIN_PLAYERS
+      ? `${count} cards, ${ranks[0]} up — one more rank for every player who sits down.`
+      : `${count} cards, ${ranks[0]} up, six each and ${count - players * HAND_SIZE} in the stock.`
+  );
 }
 
 function renderOpponents() {
   const top = $('#opponents');
-  const side = $('#opponents-side');
+  const rest = $('#opponents-side');
   clear(top);
-  clear(side);
+  clear(rest);
 
-  // Seat order starting with the player to your left: along the top, then
-  // down the right-hand side once the top row is full.
+  // Playing: everyone but you, starting with the player to your left.
+  // Watching: every seat in its own order, since none of them is yours.
   const order = [];
-  for (let i = 1; i < state.playerCount; i++) order.push((mySeat + i) % state.playerCount);
+  if (spectating) {
+    for (let seat = 0; seat < state.playerCount; seat++) order.push(seat);
+  } else {
+    for (let i = 1; i < state.playerCount; i++) order.push((mySeat + i) % state.playerCount);
+  }
+
+  // Four across the top either way. The rest go down the right while you are
+  // playing, because the bottom of the table is your own hand; while watching
+  // there is no hand down there, so they line up along the bottom instead.
   const acrossTop = Math.min(order.length, TOP_ROW_SEATS);
   top.style.setProperty('--seats', String(Math.max(acrossTop, 1)));
-  $('#felt').classList.toggle('felt--wrapped', order.length > acrossTop);
+  rest.style.setProperty('--seats', String(Math.max(acrossTop, 1)));
+  const overflow = order.length > acrossTop;
+  $('#felt').classList.toggle('felt--wrapped', overflow && !spectating);
+  $('#felt').classList.toggle('felt--watching', spectating);
+  rest.classList.toggle('opponents--side', !spectating);
+  rest.classList.toggle('opponents--bottom', spectating);
 
+  // Seats run clockwise around the table, the way play does, so the defender
+  // is always the next seat round from the attacker on screen as well as in
+  // the rules. Along the top that is simply left to right, and down the
+  // right-hand side it is top to bottom — but the bottom row has to run back
+  // the other way, right to left, to close the ring.
   order.forEach((seat, i) => {
-    (i < acrossTop ? top : side).append(opponentPanel(seat));
+    const panel = opponentPanel(seat);
+    if (i < acrossTop) {
+      top.append(panel);
+      return;
+    }
+    if (spectating) {
+      // Naming a column that comes before the last one sends grid's automatic
+      // placement onto a new row, so the row has to be named as well or the
+      // seats come out as a staircase instead of a line.
+      panel.style.gridRow = '1';
+      panel.style.gridColumn = String(acrossTop - (i - acrossTop));
+    }
+    rest.append(panel);
   });
 }
 
@@ -1214,41 +1299,55 @@ function opponentPanel(seat) {
   tally.className = 'player__count';
   tally.textContent = dealing && count === 0 ? '' : count === 1 ? '1 card' : `${count} cards`;
 
-  panel.append(head, fanOfBacks(count, 'fan fan--opponent', 'player__more'), tally);
+  panel.append(head, handRows(handIsOpen(seat) ? shownCards(seat) : count), tally);
   return panel;
 }
 
 /**
- * Up to six card backs, and a +N beside them for any more. The fan sits in
- * the middle column of a three-column row, so it stays centred whether or
- * not the +N is showing.
+ * A hand laid out in rows of at most six cards, so a big hand grows downward
+ * instead of running past the panel it sits in.
+ *
+ * Pass a number for face-down backs, or an array of cards to show them face
+ * up (a spectator's view, and the durak's hand once the game is over).
  */
-function fanOfBacks(count, fanClass, moreClass) {
-  const row = document.createElement('div');
-  row.className = 'hand-row';
+function handRows(cards) {
+  const list = typeof cards === 'number'
+    ? Array.from({ length: cards }, () => null)
+    : cards;
 
-  const fan = document.createElement('div');
-  fan.className = fanClass;
-  for (let i = 0; i < Math.min(count, FAN_LIMIT); i++) fan.append(cardEl(null, { faceDown: true }));
+  const box = document.createElement('div');
+  box.className = 'hand-rows';
 
-  const more = document.createElement('span');
-  more.className = moreClass;
-  more.textContent = count > FAN_LIMIT ? `+${count - FAN_LIMIT}` : '';
-
-  row.append(document.createElement('span'), fan, more);
-  return row;
+  // An empty hand still leaves one row's worth of space, so a panel does not
+  // jump about as its last cards are played.
+  for (let i = 0; i < Math.max(list.length, 1); i += ROW_SIZE) {
+    const fan = document.createElement('div');
+    fan.className = 'fan fan--opponent';
+    for (const card of list.slice(i, i + ROW_SIZE)) {
+      fan.append(card ? cardEl(card, { trump: state.trump }) : cardEl(null, { faceDown: true }));
+    }
+    box.append(fan);
+  }
+  return box;
 }
 
 /**
- * The stock: face-down cards in a tight stack, with the trump lying face up
- * across the bottom of it and sticking out to the right.
- *
- * The stack always spans the same width (--stack-span in the CSS). Its bottom
- * card never moves, and while there are two or more cards the top card's left
- * edge never moves either, so as cards are drawn the gaps open up to fill the
- * same space. Cards
- * are kept rather than rebuilt, so that spreading out is a slide, not a jump.
+ * Whose cards are face up: everybody's while spectating, and the durak's from
+ * the moment the game is decided, so the table sees what they were left
+ * holding rather than a row of backs.
  */
+function handIsOpen(seat) {
+  if (spectating) return true;
+  return Boolean(state?.finished) && state.durak === seat;
+}
+
+/** A seat's cards that have actually arrived, in the same order as your own hand. */
+function shownCards(seat) {
+  return state.hands[seat]
+    .filter((card) => !landing.has(cardId(card)))
+    .sort(byTrumpThenRank);
+}
+
 function renderStock() {
   // Cards already drawn stay here until they actually leave.
   const inStock = state.deck.length + departing.size;
@@ -1328,6 +1427,7 @@ function renderSlots() {
 }
 
 function renderHand({ arrivals = null } = {}) {
+  if (spectating) return; // no hand of our own to draw
   const box = $('#my-hand');
   const before = cardBoxes(box);
   clear(box);
@@ -1440,7 +1540,7 @@ const PROMPT_TONES = ['is-dealing', 'is-waiting', 'is-attacking', 'is-defending'
 
 function renderPrompt() {
   const el = $('#prompt');
-  setText(el, dealing ? 'Dealing…' : describe(state, mySeat));
+  setText(el, dealing ? 'Dealing…' : spectating ? watchingText() : describe(state, mySeat));
   el.classList.remove(...PROMPT_TONES);
   el.classList.add(promptTone());
 
@@ -1457,10 +1557,24 @@ function renderPrompt() {
   el.classList.toggle('is-clearing', counting);
 }
 
+/** What the table is doing, told from the stands rather than from a seat. */
+function watchingText() {
+  if (state.finished) {
+    if (state.draw) return 'Draw. Nobody is the fool.';
+    return `${nameAt(state.durak)} is the durak.`;
+  }
+  const defender = nameAt(state.defender);
+  if (state.taking) return `${defender} is taking the cards.`;
+  if (state.table.length === 0) return `${nameAt(state.attacker)} leads.`;
+  if (openSlots(state) === 0) return `${defender} beat everything. The table clears in a moment.`;
+  return `${defender} is defending.`;
+}
+
 /** Which of the prompt's looks fits what the table currently wants. */
 function promptTone() {
   if (dealing) return 'is-dealing';
   if (state.finished) return 'is-over';
+  if (spectating) return 'is-waiting';
   if (!canAct(state, mySeat)) return 'is-waiting';
   if (mySeat === state.defender) return 'is-defending';
   if (mySeat === state.attacker && state.table.length === 0) return 'is-attacking';
@@ -1468,6 +1582,11 @@ function promptTone() {
 }
 
 function renderActions() {
+  if (spectating) {
+    show($('#act-take'), false);
+    show($('#act-pass'), false);
+    return;
+  }
   const live = !dealing && !state.finished && !state.out[mySeat];
 
   const defending = live && mySeat === state.defender && state.table.length > 0 && !state.taking;
@@ -1503,14 +1622,25 @@ async function showResult() {
 
   // The position never reached an ending of its own, so somebody walked out.
   const conceded = !state?.finished && game.status === 'finished';
-  const durakSeat = (game.players ?? []).find((p) => p.player_id === game.durak_id)?.seat;
+
+  // The position's own verdict comes first, because the row is only settled
+  // once a player writes it: a spectator, who never writes anything, would
+  // otherwise be told the game was a draw while the cards say otherwise.
+  const decided = Boolean(state?.finished) && !conceded;
+  const durakSeat = decided
+    ? state.durak
+    : (game.players ?? []).find((p) => p.player_id === game.durak_id)?.seat;
+  const noDurak = decided ? state.draw || state.durak === null : !game.durak_id;
+  const mySeatLost = decided ? state.durak === mySeat : game.durak_id === session.user.id;
 
   let title;
   if (conceded && game.durak_id && game.durak_id !== session.user.id) {
     title = `${nameAt(durakSeat)} left the game.`;
-  } else if (!game.durak_id) {
+  } else if (noDurak) {
     title = 'Draw.';
-  } else if (game.durak_id === session.user.id) {
+  } else if (spectating) {
+    title = `${nameAt(durakSeat)} is the durak.`;
+  } else if (mySeatLost) {
     title = 'You are the durak.';
   } else {
     title = 'You got out.';
@@ -1530,7 +1660,8 @@ async function showResult() {
     const settled = scoreOf(seatRow.profile);
 
     const li = document.createElement('li');
-    if (game.durak_id === seatRow.player_id) li.classList.add('is-durak');
+    const lost = decided ? seatRow.seat === durakSeat : game.durak_id === seatRow.player_id;
+    if (lost) li.classList.add('is-durak');
 
     const name = document.createElement('span');
     name.className = 'result__name';
