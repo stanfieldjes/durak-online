@@ -344,11 +344,18 @@ above it, even for a player with more games than the hundred the chart reads.
 
 Games are spaced evenly along the line rather than placed by the clock. Eight
 friends play in bursts; a true time axis would pile a fortnight of games into
-one pixel and leave the rest of the chart empty. The dates still label the
-axis, and the tooltip gives the exact one — along with the size of the table
-and what the game did to the rating. When every game shown happened on the
-same day the labels fall back to game numbers, rather than printing one date
-four times.
+one pixel and leave the rest of the chart empty. Since the spacing is not
+really time, the axis carries no labels at all — the tooltip gives the date of
+the game under the pointer, along with the size of the table and what the game
+did to the rating.
+
+The line is white and the points are coloured, so colour on the chart means
+one thing only: green for a game you got out of, red for one you were the
+durak in. Because every point carries a result, none can be dropped once the
+run gets long the way an ordinary line chart thins its markers out; they
+shrink instead, down to a floor where a dot is still a dot. Nothing says
+"durak" in words anywhere on the chart — a rating only ever falls for one
+reason, so the red already said it.
 
 ## Why the anon key is in the repo
 

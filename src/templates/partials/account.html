@@ -10,18 +10,17 @@
                class="sr-only">
         <button type="button" class="btn btn--quiet" id="avatar-remove" hidden>Remove</button>
       </div>
-      <p class="hint">PNG, JPEG, WebP or GIF, up to 2MB. You choose which square to
-        keep. It is shown to everyone.</p>
     </div>
 
     <form class="account__name" id="account-name-form" novalidate>
-      <label class="field">
+      <label class="field" for="account-name-input">
         <span>Name at the table</span>
-        <input type="text" name="name" autocomplete="nickname" maxlength="40"
-               placeholder="3-20 characters">
       </label>
-      <p class="hint">Any script you like — Дурак and 田中 are names like any other.</p>
-      <button type="submit" class="btn btn--primary" id="account-name-save">Save</button>
+      <div class="account__name-row">
+        <input type="text" id="account-name-input" name="name" autocomplete="nickname"
+               maxlength="40" placeholder="3-20 characters">
+        <button type="submit" class="btn btn--primary" id="account-name-save">Save</button>
+      </div>
     </form>
   </div>
 

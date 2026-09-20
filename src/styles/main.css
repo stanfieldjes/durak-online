@@ -452,14 +452,29 @@ body {
 
 .account__face { display: grid; justify-items: center; gap: 0.7rem; }
 .account__face-actions { display: flex; gap: 0.4rem; flex-wrap: wrap; justify-content: center; }
-.account__face .hint { text-align: center; max-width: 18ch; }
 
 /* The file input itself is hidden (.sr-only) and its label is the button, so
    the control looks like every other button on the site. */
 .account__face-actions label.btn { cursor: pointer; }
 
-.account__name { display: grid; gap: 0.2rem; justify-items: start; }
-.account__name .hint { margin: 0 0 0.6rem; }
+.account__name { display: grid; gap: 0; }
+/* The label sits above; the field and its button share the row below it, so
+   Save is beside the name rather than stranded under it. */
+.account__name .field { margin-bottom: 0.3rem; }
+
+.account__name-row { display: flex; gap: 0.5rem; align-items: stretch; }
+.account__name-row input {
+  font: inherit;
+  flex: 1;
+  min-width: 0;
+  padding: 0.6rem 0.75rem;
+  color: var(--chalk);
+  background: rgba(0, 0, 0, 0.32);
+  border: 1px solid var(--rail-line);
+  border-radius: var(--radius);
+}
+.account__name-row input::placeholder { color: #5f5f5f; }
+.account__name-row .btn { flex: 0 0 auto; }
 
 .account__note { font-size: var(--step--1); color: var(--green-bright); margin: 0; }
 .account__note.is-bad { color: var(--red-soft); }
@@ -521,39 +536,35 @@ body {
 /* Hairline, solid and one step off the surface: present enough to read a
    value against, quiet enough to disappear behind the line. */
 .chart__grid line { stroke: rgba(242, 240, 236, 0.09); stroke-width: 1; }
-.chart__grid text,
-.chart__axis text {
+.chart__grid text {
   fill: var(--chalk-rail);
   font-size: 12px;
   font-variant-numeric: tabular-nums;
 }
 
-/* Where everyone starts, so a climb reads as a climb away from something. */
+/* Where everyone starts. Unlabelled — the axis already says 1000 beside it. */
 .chart__start line {
   stroke: var(--chalk-rail);
   stroke-width: 1;
   stroke-dasharray: 3 4;
   opacity: 0.55;
 }
-.chart__start text { fill: var(--chalk-rail); font-size: 11px; }
 
+/* White, so colour on this chart means one thing only: the result of a game. */
 .chart__line {
   fill: none;
-  stroke: var(--green-bright);
+  stroke: var(--chalk);
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
 }
 
-/* The ring is the panel's own colour, so dots stay separate where the line
-   doubles back on itself. */
-.chart__dots circle {
-  fill: var(--green-bright);
-  stroke: var(--rail-2);
-  stroke-width: 2;
-}
-
-.chart__end { fill: var(--green-bright); stroke: var(--rail-2); stroke-width: 2; }
+/* One dot per game, carrying how it went. The ring is the panel's own colour
+   so a dot stays separate from the white line running under it. */
+.chart__dot { stroke: var(--rail-2); stroke-width: 1.5; }
+.chart__dot--out { fill: var(--green-bright); }
+.chart__dot--durak { fill: var(--score-down); }
+.chart__dot--none { fill: var(--chalk-rail); }
 
 .chart__end-label {
   fill: var(--chalk);
@@ -721,6 +732,8 @@ a.btn { display: inline-block; text-decoration: none; }
 .history li.is-my-loss { box-shadow: inset 3px 0 0 var(--red); }
 
 .history__who { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+/* Picture and name together, so both are one hover target for the panel. */
+.history__player { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .history__name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .history__verb { color: var(--chalk-rail); font-size: var(--step--1); white-space: nowrap; }
 .history__draw { font-weight: 500; color: var(--chalk-rail); }
@@ -1639,9 +1652,7 @@ button.card.is-selected {
      shrinks along with everything else — at phone width a 12px label lands
      nearer five. The labels are set larger in the box's own units to come
      back out at a readable size on the glass. */
-  .chart__grid text,
-  .chart__axis text { font-size: 19px; }
-  .chart__start text { font-size: 17px; }
+  .chart__grid text { font-size: 19px; }
   .chart__end-label { font-size: 20px; }
 
   .pcard { max-width: min(15rem, calc(100vw - 2rem)); }

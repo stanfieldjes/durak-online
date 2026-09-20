@@ -197,11 +197,29 @@ test('a rating far from the start still shows where the start was', { skip: NO_D
   assert.ok(labels.some((l) => Number(l) <= 1000), `no label at or below 1000: ${labels}`);
 });
 
-test('dots are drawn for a short run and dropped for a long one', { skip: NO_DOM }, () => {
-  assert.equal(ratingChart(run(Array(8).fill(6))).querySelectorAll('.chart__dots circle').length, 9);
-  assert.equal(ratingChart(run(Array(80).fill(6))).querySelectorAll('.chart__dots circle').length, 0);
-  // The end of the line is always marked, however many games there were.
-  assert.equal(ratingChart(run(Array(80).fill(6))).querySelectorAll('.chart__end').length, 1);
+test('every game keeps a dot, however long the run', { skip: NO_DOM }, () => {
+  // Each dot carries a result in its colour, so none of them can be dropped
+  // the way an ordinary line chart drops them once they get crowded.
+  assert.equal(ratingChart(run(Array(8).fill(6))).querySelectorAll('.chart__dot').length, 9);
+  assert.equal(ratingChart(run(Array(80).fill(6))).querySelectorAll('.chart__dot').length, 81);
+});
+
+test('dots shrink as the run gets long, but stay dots', { skip: NO_DOM }, () => {
+  const radius = (el) => Number(el.querySelector('.chart__dot').getAttribute('r'));
+  const few = radius(ratingChart(run(Array(8).fill(6))));
+  const many = radius(ratingChart(run(Array(90).fill(6))));
+  assert.ok(few > many, `expected ${few} > ${many}`);
+  assert.ok(many >= 2, `dots shrank to ${many}, too small to see`);
+  assert.ok(few <= 4, `dots grew to ${few}, larger than the spec allows`);
+});
+
+test('a dot is green for a game got out of and red for one lost', { skip: NO_DOM }, () => {
+  const el = ratingChart(run([12, -18, 6]));
+  const dots = [...el.querySelectorAll('.chart__dot')];
+  assert.deepEqual(
+    dots.map((d) => d.getAttribute('class').replace('chart__dot ', '')),
+    ['chart__dot--none', 'chart__dot--out', 'chart__dot--durak', 'chart__dot--out'],
+  );
 });
 
 test('the value written at the end is the rating the player now holds', { skip: NO_DOM }, () => {
@@ -214,11 +232,16 @@ test('every game is reachable by the pointer', { skip: NO_DOM }, () => {
   assert.equal(el.querySelectorAll('.chart__hit rect').length, 13);
 });
 
-test('axis labels fall back to game numbers when every game was the same day', { skip: NO_DOM }, () => {
-  const points = run([6, 6, 6]).map((p) => ({ ...p, at: '2026-03-04T12:00:00Z' }));
-  const labels = [...ratingChart(points).querySelectorAll('.chart__axis text')].map((t) => t.textContent);
-  assert.ok(labels.some((l) => /game|first/.test(l)), labels.join(','));
-  assert.equal(new Set(labels).size, labels.length, 'the same label twice');
+test('the time axis carries no labels at all', { skip: NO_DOM }, () => {
+  // Dates meant nothing spread evenly across games played in bursts, so the
+  // only place a date appears is the tooltip for the game under the pointer.
+  const el = ratingChart(run([6, -6, 6, 6]));
+  assert.equal(el.querySelectorAll('.chart__axis').length, 0);
+  assert.equal(el.querySelector('.chart__start text'), null, 'the start line is labelled again');
+
+  const labels = [...el.querySelectorAll('text')].map((t) => t.textContent);
+  // What is left is the value axis and the figure at the end of the line.
+  assert.ok(labels.every((l) => /^\d+$/.test(l)), `non-numeric label: ${labels.join(',')}`);
 });
 
 /* ---------------- the panel ---------------- */
@@ -239,12 +262,12 @@ test('it carries the name and the rating, rounded the way everything else is', {
   assert.equal(card.querySelector('.pcard__rating').textContent, '1013');
 });
 
-test('it works out a record from either shape of row', { skip: NO_DOM }, () => {
+test('it counts games from either shape of row, and says nothing else', { skip: NO_DOM }, () => {
   const fromProfile = document.createElement('span');
   document.body.append(fromProfile);
-  ui.attachProfileCard(fromProfile, player());
+  ui.attachProfileCard(fromProfile, player());   // wins 6, losses 3, draws 1
   fromProfile.dispatchEvent(new window.FocusEvent('focus'));
-  assert.match(document.querySelector('.pcard__record').textContent, /10 games · durak 3×/);
+  assert.equal(document.querySelector('.pcard__record').textContent, '10 games');
 
   ui.hideProfileCard();
 
@@ -252,7 +275,11 @@ test('it works out a record from either shape of row', { skip: NO_DOM }, () => {
   document.body.append(fromLeaderboard);
   ui.attachProfileCard(fromLeaderboard, { username: 'bo', rating: 988, games: 4, duraks: 1 });
   fromLeaderboard.dispatchEvent(new window.FocusEvent('focus'));
-  assert.match(document.querySelector('.pcard__record').textContent, /4 games · durak 1×/);
+
+  const card = document.querySelector('.pcard');
+  assert.equal(card.querySelector('.pcard__record').textContent, '4 games');
+  // How often somebody has been the fool is their business, not a caption.
+  assert.doesNotMatch(card.textContent, /durak/i);
 });
 
 test('an empty seat gets no panel at all', { skip: NO_DOM }, () => {

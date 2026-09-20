@@ -145,14 +145,12 @@ function profileCard() {
   return cardEl_;
 }
 
-/** Games played and times fooled, from either shape of row the site has. */
-function recordOf(profile) {
-  const games = profile?.games ?? (
+/** Games played, from either shape of row the site has. */
+function gamesOf(profile) {
+  return profile?.games ?? (
     profile?.wins === undefined ? null
       : (profile.wins ?? 0) + (profile.losses ?? 0) + (profile.draws ?? 0)
   );
-  const duraks = profile?.duraks ?? profile?.losses ?? null;
-  return { games, duraks };
 }
 
 function fillProfileCard(profile) {
@@ -178,13 +176,11 @@ function fillProfileCard(profile) {
 
   body.append(name, rating, label);
 
-  const { games, duraks } = recordOf(profile);
+  const games = gamesOf(profile);
   if (games !== null && games !== undefined) {
     const record = document.createElement('span');
     record.className = 'pcard__record';
-    record.textContent = duraks === null || duraks === undefined
-      ? `${games} ${games === 1 ? 'game' : 'games'}`
-      : `${games} ${games === 1 ? 'game' : 'games'} · durak ${duraks}×`;
+    record.textContent = `${games} ${games === 1 ? 'game' : 'games'}`;
     body.append(record);
   }
 

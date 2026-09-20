@@ -16,20 +16,32 @@ import { START, formatRating, formatRatingDelta } from './rating.js';
 
 const NS = 'http://www.w3.org/2000/svg';
 
-const BOX = { w: 720, h: 260 };
+const BOX = { w: 720, h: 240 };
 // Room on the left for the value labels and on the right for the one written
 // at the end of the line. Both are set larger on narrow screens, where the
 // whole box is scaled down, so the margins allow for that size rather than
-// the one they have on a desktop.
-const PAD = { top: 20, right: 60, bottom: 32, left: 56 };
+// the one they have on a desktop. Little at the bottom: the time axis carries
+// no labels, since the dates meant nothing next to a run of games played in
+// bursts — the tooltip gives the exact one for the game under the pointer.
+const PAD = { top: 20, right: 60, bottom: 14, left: 56 };
 
 const PLOT = {
   w: BOX.w - PAD.left - PAD.right,
   h: BOX.h - PAD.top - PAD.bottom,
 };
 
-/** Dots at every game stop being readable past about this many. */
-const DOTS_UP_TO = 30;
+/**
+ * How big a point is, given how much room each one has.
+ *
+ * Every point carries a result in its colour, so unlike an ordinary line
+ * chart none of them can be dropped once the run gets long — a hundred games
+ * still has to show a hundred outcomes. They shrink instead, down to a floor
+ * where a dot is still a dot.
+ */
+function dotRadius(count) {
+  const gap = PLOT.w / Math.max(1, count - 1);
+  return Math.max(2, Math.min(4, gap / 2.6));
+}
 
 const svgEl = (name, attrs = {}) => {
   const el = document.createElementNS(NS, name);
@@ -113,54 +125,44 @@ export function ratingChart(points) {
 
   /* ---- where everyone starts ---- */
 
+  // Unlabelled: 1000 is already written on the axis beside it, and the line
+  // needs no caption to say which side of it is better.
   if (START > yMin && START < yMax) {
     const mark = svgEl('g', { class: 'chart__start' });
     mark.append(svgEl('line', { x1: PAD.left, x2: PAD.left + PLOT.w, y1: y(START), y2: y(START) }));
-    // In the margin, tucked under the value it belongs to, rather than inside
-    // the plot: anywhere on the plot is somewhere the line itself might go,
-    // and a player who has hovered around their starting rating would find
-    // the word struck through by their own results.
-    const label = svgEl('text', { x: PAD.left - 10, y: y(START) + 16, 'text-anchor': 'end' });
-    label.textContent = 'start';
-    mark.append(label);
     svg.append(mark);
   }
 
-  /* ---- the time axis ---- */
-
-  // Games are evenly spaced along the line rather than placed by the clock:
-  // eight friends play in bursts, and a true time axis would pile a fortnight
-  // of games onto one pixel and leave the rest of the chart empty. The dates
-  // still label the axis, so it reads as time; the tooltip gives the exact one.
-  const ticks = axisTicks(points);
-  const axis = svgEl('g', { class: 'chart__axis' });
-  for (const { index, text } of ticks) {
-    const label = svgEl('text', {
-      x: x(index),
-      y: PAD.top + PLOT.h + 20,
-      'text-anchor': index === 0 ? 'start' : index === points.length - 1 ? 'end' : 'middle',
-    });
-    label.textContent = text;
-    axis.append(label);
-  }
-  svg.append(axis);
-
   /* ---- the line ---- */
 
+  // White, so it reads as one continuous thing and leaves colour to mean one
+  // thing only: what happened in a game. Games are evenly spaced along it
+  // rather than placed by the clock — eight friends play in bursts, and a
+  // true time axis would pile a fortnight onto one pixel and leave the rest
+  // of the chart empty.
   const d = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)} ${y(p.rating).toFixed(1)}`).join(' ');
   svg.append(svgEl('path', { class: 'chart__line', d }));
 
-  if (points.length <= DOTS_UP_TO) {
-    const dots = svgEl('g', { class: 'chart__dots' });
-    points.forEach((p, i) => dots.append(svgEl('circle', { cx: x(i), cy: y(p.rating), r: 4 })));
-    svg.append(dots);
-  }
+  /* ---- and what each game did ---- */
+
+  // Green for a game got out of, red for one lost. The first point is the
+  // rating held before any of them, which was nothing either way.
+  const r = dotRadius(points.length);
+  const dots = svgEl('g', { class: 'chart__dots' });
+  points.forEach((p, i) => {
+    dots.append(svgEl('circle', {
+      class: i === 0 ? 'chart__dot chart__dot--none' : p.delta < 0 ? 'chart__dot chart__dot--durak' : 'chart__dot chart__dot--out',
+      cx: x(i),
+      cy: y(p.rating),
+      r: i === points.length - 1 ? r + 1 : r,
+    }));
+  });
+  svg.append(dots);
 
   /* ---- where it got to ---- */
 
   const lastX = x(points.length - 1);
   const lastY = y(values.at(-1));
-  svg.append(svgEl('circle', { class: 'chart__end', cx: lastX, cy: lastY, r: 5 }));
 
   const endLabel = svgEl('text', {
     class: 'chart__end-label',
@@ -225,9 +227,10 @@ export function ratingChart(points) {
       delta.className = `chart__tip-delta ${p.delta > 0 ? 'delta--up' : p.delta < 0 ? 'delta--down' : 'delta--flat'}`;
       delta.textContent = formatRatingDelta(p.delta);
       line.append(delta);
+      // No need to say "durak": a rating only ever goes down for one reason.
       if (p.players) {
         const at = document.createElement('span');
-        at.textContent = ` · ${p.players} players${p.durak ? ' · durak' : ''}`;
+        at.textContent = ` · ${p.players} players`;
         line.append(at);
       }
       tip.append(line);
@@ -263,25 +266,4 @@ export function ratingChart(points) {
   wrap.addEventListener('pointerleave', hidePoint);
 
   return wrap;
-}
-
-/**
- * Up to four labels along the bottom. Dates repeat when a run of games was
- * played in one evening, which would print the same day four times, so the
- * labels fall back to game numbers when the dates cannot tell them apart.
- */
-function axisTicks(points) {
-  const last = points.length - 1;
-  const wanted = Math.min(4, points.length);
-  const indexes = [];
-  for (let i = 0; i < wanted; i++) {
-    indexes.push(Math.round((i / (wanted - 1 || 1)) * last));
-  }
-  const unique = [...new Set(indexes)];
-
-  const dates = unique.map((index) => (points[index].at ? shortDate(points[index].at) : ''));
-  if (new Set(dates.filter(Boolean)).size >= 2) {
-    return unique.map((index, i) => ({ index, text: dates[i] }));
-  }
-  return unique.map((index) => ({ index, text: index === 0 ? 'first' : `game ${index}` }));
 }

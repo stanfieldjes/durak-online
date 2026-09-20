@@ -407,17 +407,23 @@ function renderRecent(games) {
       draw.textContent = 'Draw';
       who.append(draw);
     } else {
-      who.append(avatarEl(durak, { size: 'sm' }));
+      // The picture and the name are one hover target, not two: they are one
+      // person, and resting on the face of somebody you are trying to place
+      // is at least as natural as resting on their name.
+      const player = document.createElement('span');
+      player.className = 'history__player';
       const name = document.createElement('span');
       name.className = 'history__name';
       name.textContent = game.durak_id === session.user.id
         ? 'You'
         : durak?.username ?? 'Someone';
+      player.append(avatarEl(durak, { size: 'sm' }), name);
+      attachProfileCard(player, durak);
+
       const verb = document.createElement('span');
       verb.className = 'history__verb';
       verb.textContent = game.durak_id === session.user.id ? 'were the durak' : 'was the durak';
-      who.append(name, verb);
-      attachProfileCard(name, durak);
+      who.append(player, verb);
     }
 
     const others = seats
