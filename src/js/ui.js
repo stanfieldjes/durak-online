@@ -166,15 +166,14 @@ function fillProfileCard(profile) {
   name.className = 'pcard__name';
   name.textContent = profile?.username ?? 'unknown';
 
+  // No caption under it: on a panel that holds one number, and next to a
+  // site whose every table has a Rating column, there is nothing else it
+  // could be.
   const rating = document.createElement('span');
   rating.className = 'pcard__rating';
   rating.textContent = formatRating(profile?.rating);
 
-  const label = document.createElement('span');
-  label.className = 'pcard__label';
-  label.textContent = 'rating';
-
-  body.append(name, rating, label);
+  body.append(name, rating);
 
   const games = gamesOf(profile);
   if (games !== null && games !== undefined) {

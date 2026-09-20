@@ -260,6 +260,23 @@ test('it carries the name and the rating, rounded the way everything else is', {
   assert.equal(card.hidden, false);
   assert.equal(card.querySelector('.pcard__name').textContent, 'Дурак');
   assert.equal(card.querySelector('.pcard__rating').textContent, '1013');
+  // The number needs no caption saying what it is.
+  assert.doesNotMatch(card.textContent, /rating/i);
+});
+
+test('the text beside the picture stays within three lines', { skip: NO_DOM }, () => {
+  // Not a style quibble: the panel's even margin comes from the picture being
+  // the tallest thing on it, and a fourth line would push past it and open a
+  // gap above and below the picture that is not there at the sides. jsdom
+  // does no layout, so the count is what can be checked here — the height it
+  // has to stay under is written down in main.css, on .pcard__body.
+  const trigger = document.createElement('span');
+  document.body.append(trigger);
+  ui.attachProfileCard(trigger, player());
+  trigger.dispatchEvent(new window.FocusEvent('focus'));
+
+  const body = document.querySelector('.pcard__body');
+  assert.ok(body.children.length <= 3, `${body.children.length} lines beside the picture`);
 });
 
 test('it counts games from either shape of row, and says nothing else', { skip: NO_DOM }, () => {

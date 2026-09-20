@@ -198,7 +198,8 @@ body {
 .avatar--sm { --avatar-size: 1.7rem; }
 .avatar--lg { --avatar-size: 5.5rem; font-size: 2.4rem; }
 
-.avatar--xl { --avatar-size: 4rem; font-size: 1.8rem; }
+/* The hover panel's picture. Sized to clear the text beside it — see .pcard. */
+.avatar--xl { --avatar-size: 4.5rem; font-size: 2rem; }
 
 /* A picture and a name side by side. */
 .player-chip { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
@@ -219,7 +220,10 @@ body {
   display: flex;
   align-items: center;
   gap: 0.85rem;
-  padding: 0.75rem 0.9rem;
+  /* Equal on all four sides, and the picture below stretches to the height of
+     whatever is beside it, so this is the margin around the picture rather
+     than only the distance to the nearest edge. */
+  padding: 0.85rem;
   max-width: 17rem;
   background: var(--rail-2);
   border: 1px solid var(--rail-line);
@@ -238,11 +242,23 @@ body {
   .pcard { animation: none; }
 }
 
-.pcard__body { display: grid; gap: 0.05rem; min-width: 0; }
+/*
+  The picture is the tallest thing on the panel, which is what makes the
+  padding above read as the margin around it: the flex line takes its height
+  from the picture, so the space over and under it is the padding and nothing
+  else. The three lines beside it come to about 66px against the picture's 72,
+  and none of them can wrap — the name is clipped with an ellipsis rather than
+  running on. Anything added to that column has to stay inside the 72.
+*/
+.pcard__body { display: grid; gap: 0.15rem; min-width: 0; }
 
+/* Who they are: the heading of the panel, and the only bold white thing on
+   it. The rating below is a number, and reads as one — lighter, quieter, and
+   set in figures of an even width so it does not shimmer as it changes. */
 .pcard__name {
   font-weight: 600;
   font-size: var(--step-0);
+  line-height: 1.25;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -250,22 +266,16 @@ body {
 
 .pcard__rating {
   font-size: var(--step-1);
-  font-weight: 600;
-  line-height: 1.1;
+  font-weight: 400;
+  line-height: 1.15;
+  color: var(--chalk-dim);
   font-variant-numeric: tabular-nums;
 }
 
-.pcard__label {
-  font-size: 0.7rem;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--chalk-rail);
-}
-
 .pcard__record {
-  margin-top: 0.3rem;
   font-size: var(--step--1);
-  color: var(--chalk-dim);
+  line-height: 1.25;
+  color: var(--chalk-rail);
 }
 
 /* The hover target itself. Focusable, so the panel is reachable by keyboard
