@@ -56,6 +56,7 @@ import { play as playSound, getVolume, setVolume, setSoundActive } from './sound
 import { initTableSize, tableShown, tableHidden } from './tablesize.js';
 import {
   $, show, setText, clear, toast, cardEl, avatarEl, paintRating, paintDelta,
+  attachProfileCard, hideProfileCard,
 } from './ui.js';
 
 /**
@@ -381,6 +382,7 @@ function isOlder(row) {
 
 export function leaveGame() {
   setSoundActive(false);
+  hideProfileCard();
   if (unwatch) unwatch();
   reset();
 }
@@ -1164,6 +1166,8 @@ function renderWaiting() {
       text.textContent = profile.username + (game.host_id === profile.id ? ' (host)' : '');
       name.append(text);
 
+      attachProfileCard(name, profile);
+
       const rating = document.createElement('span');
       rating.className = 'seat__rating';
       paintRating(rating, ratingOf(profile));
@@ -1291,6 +1295,8 @@ function opponentPanel(seat) {
       : roleOf(state, seat);
 
   head.append(face, name, rating, role);
+  // Who is that? A bigger picture, their name and their rating, on hover.
+  attachProfileCard(head, profile);
 
   // Only cards that have arrived count; one still in the air joins when it lands.
   const hand = state.hands[seat];
@@ -1670,6 +1676,7 @@ async function showResult() {
     const text = document.createElement('span');
     text.textContent = seatRow.profile?.username ?? `Seat ${seatRow.seat + 1}`;
     name.append(text);
+    attachProfileCard(name, seatRow.profile);
 
     // The rating a player now sits at, and what this game did to it. The
     // rating is shown plain and the change is coloured: a rating is a place

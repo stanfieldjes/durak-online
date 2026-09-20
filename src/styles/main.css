@@ -169,7 +169,11 @@ body {
   flex: 0 0 auto;
   width: var(--avatar-size);
   height: var(--avatar-size);
-  border-radius: 50%;
+  /* Square, with only the corner taken off — the same radius the playing
+     cards use, so a picture sits in the layout like everything else does.
+     Proportional rather than fixed, so the corner reads the same on the
+     1.25rem one beside a hand and the 5.5rem one on the account page. */
+  border-radius: max(2px, calc(var(--avatar-size) * 0.12));
   overflow: hidden;
   display: inline-grid;
   place-items: center;
@@ -194,9 +198,80 @@ body {
 .avatar--sm { --avatar-size: 1.7rem; }
 .avatar--lg { --avatar-size: 5.5rem; font-size: 2.4rem; }
 
+.avatar--xl { --avatar-size: 4rem; font-size: 1.8rem; }
+
 /* A picture and a name side by side. */
 .player-chip { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .player-chip__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- the panel shown while the pointer rests on a player ---------- */
+
+/*
+  One of these exists for the whole site, moved to wherever it is needed, and
+  it is placed in viewport coordinates from JavaScript — so it must not be
+  laid out by anything around it. It takes no pointer events at all: it is
+  something to read, never something to hit, and a panel that swallowed clicks
+  would be in the way of the table underneath it.
+*/
+.pcard {
+  position: fixed;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+  padding: 0.75rem 0.9rem;
+  max-width: 17rem;
+  background: var(--rail-2);
+  border: 1px solid var(--rail-line);
+  border-radius: var(--radius);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  animation: pcard-in 110ms ease-out;
+}
+
+@keyframes pcard-in {
+  from { opacity: 0; transform: translateY(3px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pcard { animation: none; }
+}
+
+.pcard__body { display: grid; gap: 0.05rem; min-width: 0; }
+
+.pcard__name {
+  font-weight: 600;
+  font-size: var(--step-0);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcard__rating {
+  font-size: var(--step-1);
+  font-weight: 600;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+}
+
+.pcard__label {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--chalk-rail);
+}
+
+.pcard__record {
+  margin-top: 0.3rem;
+  font-size: var(--step--1);
+  color: var(--chalk-dim);
+}
+
+/* The hover target itself. Focusable, so the panel is reachable by keyboard
+   as well, and marked so it is clear there is something to rest on. */
+.has-card { cursor: default; border-radius: 3px; }
+.has-card:focus-visible { outline: 2px solid var(--chalk-rail); outline-offset: 2px; }
 
 /* ---------- layout ---------- */
 
@@ -388,6 +463,199 @@ body {
 
 .account__note { font-size: var(--step--1); color: var(--green-bright); margin: 0; }
 .account__note.is-bad { color: var(--red-soft); }
+
+/* ---------- rating, and where it has been ---------- */
+
+.rating-panel {
+  display: grid;
+  gap: 1rem;
+  background: var(--rail-2);
+  border: 1px solid var(--rail-line);
+  border-radius: var(--radius);
+  padding: clamp(1.25rem, 3vw, 1.75rem);
+}
+
+.rating-panel__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.rating-panel__figure { display: grid; gap: 0.1rem; }
+
+.rating-panel__label {
+  font-size: 0.72rem;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--chalk-rail);
+}
+
+/* The one big number on the page. Proportional figures, not tabular: at this
+   size tabular digits leave visible gaps inside a number like 1011. */
+.rating-panel__value {
+  font-size: var(--step-3);
+  font-weight: 600;
+  line-height: 1;
+}
+
+.rating-panel__meta { margin: 0; font-size: var(--step--1); color: var(--chalk-dim); }
+
+/*
+  The line itself. A fixed viewBox scaled to the panel width, so nothing has
+  to be measured or redrawn when the window changes; everything inside is
+  sized in the coordinates of that box.
+*/
+.chart { position: relative; margin: 0; }
+
+.chart__svg { display: block; width: 100%; height: auto; overflow: visible; }
+
+.chart__empty {
+  margin: 0;
+  padding: 1.5rem 0;
+  color: var(--chalk-dim);
+  font-size: var(--step--1);
+}
+
+/* Hairline, solid and one step off the surface: present enough to read a
+   value against, quiet enough to disappear behind the line. */
+.chart__grid line { stroke: rgba(242, 240, 236, 0.09); stroke-width: 1; }
+.chart__grid text,
+.chart__axis text {
+  fill: var(--chalk-rail);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+/* Where everyone starts, so a climb reads as a climb away from something. */
+.chart__start line {
+  stroke: var(--chalk-rail);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.55;
+}
+.chart__start text { fill: var(--chalk-rail); font-size: 11px; }
+
+.chart__line {
+  fill: none;
+  stroke: var(--green-bright);
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+
+/* The ring is the panel's own colour, so dots stay separate where the line
+   doubles back on itself. */
+.chart__dots circle {
+  fill: var(--green-bright);
+  stroke: var(--rail-2);
+  stroke-width: 2;
+}
+
+.chart__end { fill: var(--green-bright); stroke: var(--rail-2); stroke-width: 2; }
+
+.chart__end-label {
+  fill: var(--chalk);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.chart__cursor { stroke: rgba(242, 240, 236, 0.28); stroke-width: 1; }
+
+/* Invisible bands, one per game, so the whole height of the chart is a target
+   rather than a four-pixel dot. */
+.chart__hit rect { fill: transparent; }
+
+.chart__tip {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, calc(-100% - 0.75rem));
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.45rem 0.6rem;
+  background: var(--rail);
+  border: 1px solid var(--rail-line);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  pointer-events: none;
+  white-space: nowrap;
+  font-size: var(--step--1);
+}
+
+/* Near an edge the tooltip stops being centred and hangs off the point
+   instead, so it never runs past the side of the panel. */
+.chart__tip.is-left { transform: translate(-0.5rem, calc(-100% - 0.75rem)); }
+.chart__tip.is-right { transform: translate(calc(-100% + 0.5rem), calc(-100% - 0.75rem)); }
+
+.chart__tip-when { color: var(--chalk-rail); font-size: 0.72rem; }
+.chart__tip-rating { font-weight: 600; font-size: var(--step-0); font-variant-numeric: tabular-nums; }
+.chart__tip-line { color: var(--chalk-dim); }
+.chart__tip-delta { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+/* ---------- choosing the square to keep ---------- */
+
+/*
+  A <dialog> is display:none until it is open, and an author rule setting
+  `display` on it would override that and leave the thing on the page from the
+  start — so the display belongs on .cropper[open] and nowhere else.
+*/
+.cropper[open] {
+  display: grid;
+  gap: 0.85rem;
+  justify-items: center;
+}
+
+.cropper {
+  border: 1px solid var(--rail-line);
+  border-radius: var(--radius);
+  background: var(--rail-2);
+  color: var(--chalk);
+  padding: clamp(1rem, 4vw, 1.5rem);
+  max-width: min(24rem, calc(100vw - 2rem));
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+
+.cropper::backdrop { background: rgba(4, 10, 7, 0.75); }
+
+.cropper__title { margin: 0; font-size: var(--step-1); font-weight: 600; }
+.cropper__hint { margin: 0; font-size: var(--step--1); color: var(--chalk-dim); text-align: center; }
+
+/* The window onto the picture. Square, because the avatar is. */
+.cropper__frame {
+  position: relative;
+  width: min(288px, calc(100vw - 5rem));
+  aspect-ratio: 1;
+  overflow: hidden;
+  border-radius: var(--radius);
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--rail-line);
+}
+
+.cropper__canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;   /* the drag is ours, not the browser's scroll */
+}
+
+.cropper__canvas.is-dragging { cursor: grabbing; }
+.cropper__canvas:focus-visible { outline: 2px solid var(--green-bright); outline-offset: -2px; }
+
+.cropper__zoom {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  width: 100%;
+  font-size: var(--step--1);
+  color: var(--chalk-dim);
+}
+
+.cropper__zoom input { flex: 1; accent-color: var(--green-bright); }
+
+.cropper__actions { display: flex; gap: 0.5rem; justify-content: flex-end; width: 100%; }
 
 /* ---------- lobby ---------- */
 
@@ -1366,6 +1634,17 @@ button.card.is-selected {
   .panel--auth { grid-template-columns: 1fr; }
   .account { grid-template-columns: 1fr; justify-items: center; }
   .account__name { justify-self: stretch; }
+
+  /* The chart is drawn in a fixed box scaled to the panel, so its text
+     shrinks along with everything else — at phone width a 12px label lands
+     nearer five. The labels are set larger in the box's own units to come
+     back out at a readable size on the glass. */
+  .chart__grid text,
+  .chart__axis text { font-size: 19px; }
+  .chart__start text { font-size: 17px; }
+  .chart__end-label { font-size: 20px; }
+
+  .pcard { max-width: min(15rem, calc(100vw - 2rem)); }
 
   /* Fan out into rows instead of overlapping, so tapping one card never hides
      the ones beside it. */

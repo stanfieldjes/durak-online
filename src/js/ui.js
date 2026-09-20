@@ -86,13 +86,178 @@ export function avatarEl(profile, { size = 'sm' } = {}) {
 }
 
 /** A picture and a name together: how a player is shown everywhere but the felt. */
-export function playerEl(profile, { size = 'sm', fallback = 'unknown' } = {}) {
+export function playerEl(profile, { size = 'sm', fallback = 'unknown', card = true } = {}) {
   const el = document.createElement('span');
   el.className = 'player-chip';
   const name = document.createElement('span');
   name.className = 'player-chip__name';
   name.textContent = profile?.username ?? fallback;
   el.append(avatarEl(profile, { size }), name);
+  if (card) attachProfileCard(el, profile);
+  return el;
+}
+
+/* ---------------- the card that follows the pointer ---------------- */
+
+/**
+ * Who is that? A panel with a bigger picture, the name and the rating, shown
+ * while the pointer rests on a player anywhere on the site.
+ *
+ * There is one panel, moved around and refilled, rather than one per player:
+ * the table re-renders on every move and the leaderboard is a list, so a panel
+ * per player would mean building dozens of them that are almost never seen.
+ *
+ * It lives directly on <body> and is positioned in viewport coordinates, which
+ * keeps it clear of the overflow and stacking contexts it would otherwise be
+ * trapped inside — the felt in particular clips its own children.
+ */
+
+const CARD_DELAY_MS = 90;
+
+let cardEl_ = null;
+let cardTrigger = null;
+let cardTimer = null;
+
+function profileCard() {
+  if (cardEl_) return cardEl_;
+
+  cardEl_ = document.createElement('div');
+  cardEl_.className = 'pcard';
+  cardEl_.id = 'player-card';
+  cardEl_.setAttribute('role', 'tooltip');
+  cardEl_.hidden = true;
+  document.body.append(cardEl_);
+
+  // Anything that moves the page out from under the panel closes it: it is
+  // pinned to where the player was, and the player has now gone somewhere else.
+  addEventListener('scroll', hideProfileCard, { capture: true, passive: true });
+  addEventListener('resize', hideProfileCard, { passive: true });
+  addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') hideProfileCard();
+  });
+  // The pointer can leave a trigger without a pointerleave ever arriving —
+  // the commonest way being a re-render that removes the element mid-hover.
+  addEventListener('pointermove', (event) => {
+    if (!cardTrigger) return;
+    if (!cardTrigger.isConnected || !cardTrigger.contains(event.target)) hideProfileCard();
+  }, { passive: true });
+
+  return cardEl_;
+}
+
+/** Games played and times fooled, from either shape of row the site has. */
+function recordOf(profile) {
+  const games = profile?.games ?? (
+    profile?.wins === undefined ? null
+      : (profile.wins ?? 0) + (profile.losses ?? 0) + (profile.draws ?? 0)
+  );
+  const duraks = profile?.duraks ?? profile?.losses ?? null;
+  return { games, duraks };
+}
+
+function fillProfileCard(profile) {
+  const el = profileCard();
+  clear(el);
+
+  el.append(avatarEl(profile, { size: 'xl' }));
+
+  const body = document.createElement('div');
+  body.className = 'pcard__body';
+
+  const name = document.createElement('span');
+  name.className = 'pcard__name';
+  name.textContent = profile?.username ?? 'unknown';
+
+  const rating = document.createElement('span');
+  rating.className = 'pcard__rating';
+  rating.textContent = formatRating(profile?.rating);
+
+  const label = document.createElement('span');
+  label.className = 'pcard__label';
+  label.textContent = 'rating';
+
+  body.append(name, rating, label);
+
+  const { games, duraks } = recordOf(profile);
+  if (games !== null && games !== undefined) {
+    const record = document.createElement('span');
+    record.className = 'pcard__record';
+    record.textContent = duraks === null || duraks === undefined
+      ? `${games} ${games === 1 ? 'game' : 'games'}`
+      : `${games} ${games === 1 ? 'game' : 'games'} · durak ${duraks}×`;
+    body.append(record);
+  }
+
+  el.append(body);
+}
+
+/**
+ * Put the panel beside its trigger: above by choice, below when there is no
+ * room above, and always inside the window rather than half off the edge.
+ */
+function placeProfileCard(trigger) {
+  const el = profileCard();
+  const at = trigger.getBoundingClientRect();
+  const gap = 10;
+  const edge = 8;
+
+  // Measured while shown but not yet placed, so the size is the real one.
+  const width = el.offsetWidth;
+  const height = el.offsetHeight;
+
+  let left = at.left + at.width / 2 - width / 2;
+  left = Math.max(edge, Math.min(left, innerWidth - width - edge));
+
+  const above = at.top - gap - height;
+  const top = above >= edge ? above : Math.min(at.bottom + gap, innerHeight - height - edge);
+
+  el.style.left = `${Math.round(left)}px`;
+  el.style.top = `${Math.round(Math.max(edge, top))}px`;
+}
+
+function showProfileCard(trigger, profile) {
+  cardTrigger = trigger;
+  fillProfileCard(profile);
+  const el = profileCard();
+  el.hidden = false;
+  placeProfileCard(trigger);
+  trigger.setAttribute('aria-describedby', el.id);
+}
+
+export function hideProfileCard() {
+  clearTimeout(cardTimer);
+  cardTimer = null;
+  if (cardTrigger) cardTrigger.removeAttribute('aria-describedby');
+  cardTrigger = null;
+  if (cardEl_) cardEl_.hidden = true;
+}
+
+/**
+ * Show the panel for `profile` while the pointer or the keyboard rests on
+ * `el`. Does nothing for an empty seat — there is nobody to describe.
+ *
+ * The small delay before it opens is what stops a run down a leaderboard from
+ * firing a panel per row on the way past.
+ */
+export function attachProfileCard(el, profile) {
+  if (!el || !profile?.username) return el;
+
+  el.classList.add('has-card');
+  if (!el.hasAttribute('tabindex')) el.tabIndex = 0;
+
+  const open = (now = false) => {
+    clearTimeout(cardTimer);
+    if (now) return showProfileCard(el, profile);
+    cardTimer = setTimeout(() => showProfileCard(el, profile), CARD_DELAY_MS);
+  };
+  const close = () => {
+    if (cardTrigger === el || cardTimer) hideProfileCard();
+  };
+
+  el.addEventListener('pointerenter', () => open());
+  el.addEventListener('pointerleave', close);
+  el.addEventListener('focus', () => open(true));
+  el.addEventListener('blur', close);
   return el;
 }
 

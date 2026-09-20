@@ -1,19 +1,34 @@
 /**
- * Your own name and picture.
+ * Your own name, picture and rating.
  *
  * The picture goes into the `avatars` storage bucket under a folder named
  * with your user id, which is the only place the storage policy lets you
  * write. Where it landed is then recorded on the profile through set_avatar(),
  * so the browser never writes to the profiles table itself.
+ *
+ * What is uploaded is the square chosen in the cropper, not the file that was
+ * picked — see cropper.js.
  */
-import { setUsername, setAvatar, uploadAvatar, getProfile } from './db.js';
+import { setUsername, setAvatar, uploadAvatar, getProfile, listMyRatingHistory } from './db.js';
 import { readableError } from './supabase.js';
 import { session, renderWhoami, nameProblem } from './auth.js';
-import { $, show, setText, clear, toast, avatarEl } from './ui.js';
+import { $, show, setText, clear, toast, avatarEl, paintRating } from './ui.js';
+import { cropToSquare } from './cropper.js';
+import { ratingChart } from './chart.js';
 
 /** Bigger than this and the bucket refuses it, so say so before uploading. */
 const MAX_BYTES = 2 * 1024 * 1024;
 const TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+
+/** How many games back the line goes. Nobody here has played more. */
+const HISTORY = 100;
+
+/**
+ * Bumped on every visit to the page, so a history that arrives after the
+ * player has left and come back is dropped rather than drawn on top of the
+ * one they are already looking at.
+ */
+let visit = 0;
 
 export function initAccount() {
   $('#account-name-form').addEventListener('submit', onRename);
@@ -37,6 +52,7 @@ export async function enterAccount() {
 
   $('#account-name-form').name.value = session.profile.username;
   paint();
+  paintHistory();
 }
 
 function paint() {
@@ -44,7 +60,59 @@ function paint() {
   clear(box);
   box.append(avatarEl(session.profile, { size: 'lg' }));
   show($('#avatar-remove'), Boolean(session.profile?.avatar_url));
+  paintRating($('#account-rating'), session.profile?.rating);
   renderWhoami();
+}
+
+/**
+ * The line of the rating over time.
+ *
+ * Walked backwards from the rating on the profile rather than forwards from
+ * the starting one: the profile holds the true current figure, and anchoring
+ * the chart to it means the last point always agrees with the number printed
+ * above it — even for a player with more games than the limit here shows.
+ */
+async function paintHistory() {
+  const mine = ++visit;
+  const box = $('#account-chart');
+  clear(box);
+  setText($('#account-games'), '');
+
+  let games;
+  try {
+    games = await listMyRatingHistory(session.user.id, HISTORY);
+  } catch (error) {
+    if (mine !== visit) return;
+    const failed = document.createElement('p');
+    failed.className = 'chart__empty';
+    failed.textContent = readableError(error);
+    box.append(failed);
+    return;
+  }
+
+  // Somebody else's turn now: they left the page and came back while this was
+  // in the air, and a second chart is already on its way.
+  if (mine !== visit) return;
+
+  const now = Number(session.profile?.rating ?? 0);
+  const points = [];
+  let rating = now;
+
+  for (let i = games.length - 1; i >= 0; i--) {
+    points.unshift({ ...games[i], rating });
+    rating -= games[i].delta;
+  }
+  // Where the line begins: the rating held before the first game shown.
+  points.unshift({
+    at: games[0]?.at ?? null,
+    rating,
+    delta: null,
+    players: null,
+    durak: false,
+  });
+
+  box.append(ratingChart(games.length ? points : []));
+  setText($('#account-games'), games.length === 1 ? '1 game' : `${games.length} games`);
 }
 
 function note(message, kind = 'info') {
@@ -89,23 +157,34 @@ async function onRename(event) {
 async function onPick(event) {
   const input = event.currentTarget;
   const file = input.files?.[0];
+  input.value = '';   // so picking the same file again still fires a change
   if (!file) return;
 
   if (!TYPES.includes(file.type)) {
     note('Pictures must be PNG, JPEG, WebP or GIF.', 'bad');
-    input.value = '';
     return;
   }
   if (file.size > MAX_BYTES) {
     note('That picture is over 2MB. Try a smaller one.', 'bad');
-    input.value = '';
+    return;
+  }
+
+  let square;
+  try {
+    square = await cropToSquare(file);
+  } catch {
+    note('That file could not be opened as a picture.', 'bad');
+    return;
+  }
+  if (!square) {
+    note(null);   // they backed out of the cropper
     return;
   }
 
   input.disabled = true;
   note('Uploading…');
   try {
-    const url = await uploadAvatar(session.user.id, file);
+    const url = await uploadAvatar(session.user.id, square);
     session.profile = await setAvatar(url);
     paint();
     note('Picture updated.');
@@ -113,7 +192,6 @@ async function onPick(event) {
     note(uploadProblem(error), 'bad');
   } finally {
     input.disabled = false;
-    input.value = '';   // so picking the same file again still fires a change
   }
 }
 
@@ -153,4 +231,3 @@ function uploadProblem(error) {
   }
   return readableError(error);
 }
-

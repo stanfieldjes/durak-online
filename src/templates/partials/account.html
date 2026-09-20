@@ -10,7 +10,8 @@
                class="sr-only">
         <button type="button" class="btn btn--quiet" id="avatar-remove" hidden>Remove</button>
       </div>
-      <p class="hint">PNG, JPEG, WebP or GIF, up to 2MB. It is shown to everyone.</p>
+      <p class="hint">PNG, JPEG, WebP or GIF, up to 2MB. You choose which square to
+        keep. It is shown to everyone.</p>
     </div>
 
     <form class="account__name" id="account-name-form" novalidate>
@@ -25,4 +26,17 @@
   </div>
 
   <p class="account__note" id="account-note" role="status" hidden></p>
+
+  <section class="rating-panel">
+    <header class="rating-panel__head">
+      <div class="rating-panel__figure">
+        <span class="rating-panel__label">Rating</span>
+        <span class="rating-panel__value" id="account-rating">—</span>
+      </div>
+      <p class="rating-panel__meta">
+        <span id="account-games"></span>
+      </p>
+    </header>
+    <div id="account-chart"></div>
+  </section>
 </section>

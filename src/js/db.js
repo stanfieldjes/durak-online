@@ -45,22 +45,32 @@ export async function setAvatar(url) {
   return data;
 }
 
+/** What a cropped picture is called, from what the canvas managed to encode. */
+const EXTENSIONS = {
+  'image/webp': 'webp',
+  'image/png': 'png',
+  'image/jpeg': 'jpg',
+  'image/gif': 'gif',
+};
+
 /**
  * Put a picture in the avatars bucket and return its public address.
  *
- * The path always begins with the player's own user id, because that is what
- * the storage policy checks — you may write inside your own folder and
+ * Takes the square that came out of the cropper rather than the file the
+ * player picked, so the name has to be made up here — a Blob has no name of
+ * its own. The path always begins with the player's own user id, because that
+ * is what the storage policy checks: you may write inside your own folder and
  * nowhere else. The name after it changes on every upload so that a new
  * picture is never served from a cache of the old one, and the previous file
  * is removed once the new one is in place.
  */
-export async function uploadAvatar(userId, file) {
-  const extension = (file.name.split('.').pop() ?? 'png').toLowerCase().replace(/[^a-z0-9]/g, '');
-  const path = `${userId}/${Date.now()}.${extension || 'png'}`;
+export async function uploadAvatar(userId, blob) {
+  const type = blob.type || 'image/png';
+  const path = `${userId}/${Date.now()}.${EXTENSIONS[type] ?? 'png'}`;
 
   const { error } = await supabase.storage
     .from(AVATAR_BUCKET)
-    .upload(path, file, { contentType: file.type, upsert: false });
+    .upload(path, blob, { contentType: type, upsert: false });
   if (error) throw error;
 
   const { data } = supabase.storage.from(AVATAR_BUCKET).getPublicUrl(path);
@@ -194,6 +204,39 @@ async function mySeatGameIds(userId) {
     .limit(200);
   if (error) throw error;
   return (data ?? []).map((s) => s.game_id);
+}
+
+/**
+ * This player's finished games, oldest first, with what each one did to their
+ * rating — the makings of the line on the account page.
+ *
+ * Asked for newest first and turned round afterwards, so that a player with
+ * more games than the limit gets their recent ones rather than their first
+ * ever. Only the seat count comes back from the join; the chart wants to know
+ * how big the table was, not who was at it.
+ */
+export async function listMyRatingHistory(userId, limit = 100) {
+  const ids = await mySeatGameIds(userId);
+  if (ids.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('games')
+    .select('id, durak_id, rating_delta, updated_at, players:game_players ( seat )')
+    .in('id', ids)
+    .eq('status', 'finished')
+    .order('updated_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+
+  return (data ?? [])
+    .map((game) => ({
+      id: game.id,
+      at: game.updated_at,
+      delta: Number(game.rating_delta?.[userId] ?? 0),
+      players: game.players?.length ?? null,
+      durak: game.durak_id === userId,
+    }))
+    .reverse();
 }
 
 /** Games this player is seated at that are still being played, latest move first. */

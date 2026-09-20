@@ -15,6 +15,7 @@ import { newGame, openSlots } from './durak.js';
 import { formatRating } from './rating.js';
 import {
   $, show, setText, clear, toast, relativeTime, playerEl, avatarEl, paintDelta,
+  attachProfileCard,
 } from './ui.js';
 
 /**
@@ -416,6 +417,7 @@ function renderRecent(games) {
       verb.className = 'history__verb';
       verb.textContent = game.durak_id === session.user.id ? 'were the durak' : 'was the durak';
       who.append(name, verb);
+      attachProfileCard(name, durak);
     }
 
     const others = seats

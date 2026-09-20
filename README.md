@@ -21,6 +21,12 @@ security policies, the RPCs, the rating maths, the avatars bucket, and the
 realtime publication. It is safe to run again: everything in it is either
 `if not exists` or an idempotent alter, and it never touches rows.
 
+It is also safe to run over a database that held the *previous* schema, which
+is a different and harder thing — a column cannot be dropped while a view or a
+policy still refers to it, so those come down first and are rebuilt further
+down. `npm run test:sql` exercises both paths: the new schema on an empty
+database, and the new schema over the old one with rows already in it.
+
 In Authentication → Providers, make sure Email is on. For a private game among
 friends, turn *off* "Confirm email" so sign-up works in one step. Leave it on if
 the link will be public.
@@ -48,10 +54,12 @@ npm test                     # engine, concurrency, rating and markup tests
 npm run test:sql             # the schema, against a throwaway Postgres
 ```
 
-`build.py` needs nothing but Python 3.9+. The tests need Node 18+. `test:sql`
-additionally needs a local `postgres` binary and is skipped in CI; everything
-it checks about the rating is also checked in `tests/sync.test.mjs`, which
-needs nothing.
+`build.py` needs nothing but Python 3.9+. The tests need Node 18+ and nothing
+else, with one exception: the parts of `tests/view.test.mjs` that need a
+document use jsdom, the one devDependency. Without `npm install` those skip
+themselves and the rest of the suite still runs. `test:sql` additionally needs
+a local `postgres` binary and is skipped in CI; everything it checks about the
+rating is also checked in `tests/sync.test.mjs`, which needs nothing.
 
 **4. Deploy**
 
@@ -264,6 +272,27 @@ your own folder, which is what stops one player replacing another's picture.
 Uploads are capped at 2MB and limited to PNG, JPEG, WebP and GIF. Uploading a
 new one removes the old file, so the bucket holds one picture per player.
 
+Avatars are square, and the player picks which square. Choosing a file opens
+the cropper (`src/js/cropper.js`): drag to move the picture about, scroll or
+pull the slider to zoom, and the window shows exactly what will be kept. The
+crop window and the file that leaves it are drawn by the same function from
+the same three numbers — the centre of the square and its side, in the
+picture's own pixels — so what is uploaded is what was on screen.
+
+What is uploaded is therefore never the file that was picked. It is re-encoded
+from a canvas, at most 512 square, as WebP where the browser can write it:
+
+- A 4MB photograph becomes a couple of kilobytes, so the 2MB cap is only ever
+  reached by the file *before* cropping.
+- Camera metadata does not survive the canvas, so a holiday photo does not
+  arrive carrying the coordinates of where it was taken.
+- Orientation is resolved on the way in, through `createImageBitmap(file,
+  { imageOrientation: 'from-image' })`. A phone photograph is usually stored
+  sideways with a tag saying which way up it goes, and a canvas that ignores
+  the tag produces an avatar lying on its side.
+
+An animated GIF becomes a still, since a canvas holds one frame.
+
 `schema.sql` creates the bucket and its policies. Storage lives in a schema
 that file may not own, depending on how the project was created, so that part
 is wrapped in a block that reports a notice instead of failing the whole run.
@@ -278,7 +307,35 @@ If you see `Skipped the avatars bucket`, do it by hand:
 Players who have not set a picture get the first letter of their name on a
 colour derived from it, so everyone is still distinguishable at a glance. That
 same fallback catches a picture that fails to load, so a broken image icon
-never appears at the table.
+never appears at the table. The letter is taken by character rather than by
+code unit, since slicing a string at index 1 cuts an emoji in half.
+
+Resting the pointer on a player — at the table, in the lobby, or on the
+leaderboard — opens a panel with a larger picture, their name and their
+rating. There is one panel for the whole site, refilled and moved rather than
+built per player: the table re-renders on every move, so a panel per seat
+would mean building dozens that are almost never looked at. It is placed in
+viewport coordinates on `<body>`, which keeps it clear of the felt's own
+clipping, and it takes no pointer events, so it can never be in the way of the
+table underneath. Triggers are focusable, so the panel is reachable from the
+keyboard too.
+
+## Your own rating, over time
+
+The account page draws the rating as a line, one point per finished game.
+
+The points are walked *backwards* from the rating on the profile rather than
+forwards from 1000. The profile holds the true current figure, so anchoring
+the line to it means the last point always agrees with the number printed
+above it, even for a player with more games than the hundred the chart reads.
+
+Games are spaced evenly along the line rather than placed by the clock. Eight
+friends play in bursts; a true time axis would pile a fortnight of games into
+one pixel and leave the rest of the chart empty. The dates still label the
+axis, and the tooltip gives the exact one — along with the size of the table
+and what the game did to the rating. When every game shown happened on the
+same day the labels fall back to game numbers, rather than printing one date
+four times.
 
 ## Why the anon key is in the repo
 
@@ -350,14 +407,18 @@ src/audio/               the clips themselves
 src/js/rating.js         rating model, mirrored by public.rating_changes()
 src/js/db.js             every Supabase call lives here
 src/js/game.js           table rendering, input, spectating, stale-write retry
-src/js/account.js        your own name and picture
+src/js/account.js        your own name, picture and rating
+src/js/cropper.js        picking the square of a picture that becomes an avatar
+src/js/chart.js          the rating-over-time line
 src/js/{app,auth,lobby,leaderboard,ui}.js
 supabase/schema.sql      tables, RLS, RPCs, rating maths, avatars bucket
 tests/engine.test.mjs    playouts at 2, 3 and 4 players
 tests/sync.test.mjs      SQL contract, concurrency, rating behaviour
 tests/rating.test.mjs    the rating model on its own
 tests/markup.test.mjs    templates, stylesheet and scripts agree with each other
-tests/sql/               runs schema.sql against a throwaway Postgres
+tests/view.test.mjs      the crop square, the rating line, the hover panel
+tests/sql/               runs schema.sql against a throwaway Postgres, both on
+                         an empty database and over the previous schema
 ```
 
 The generator supports four tags: `{{ include "partials/x.html" }}`,
