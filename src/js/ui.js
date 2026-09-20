@@ -1,5 +1,6 @@
 import { SUIT_GLYPH, SUIT_NAME } from './durak.js';
 import { formatRating, formatRatingDelta } from './rating.js';
+import { isTop, isBottom } from './standing.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -85,6 +86,24 @@ export function avatarEl(profile, { size = 'sm' } = {}) {
   return el;
 }
 
+/**
+ * Colour a name by where its owner sits on the ladder: gold at the top, the
+ * red off the back of the cards at the bottom, ordinary ink in between.
+ *
+ * Called at every place a name is written rather than being baked into one
+ * component, because the felt, the lobby and the leaderboard each build their
+ * own. The one place it is deliberately not called is the recent-games list,
+ * where every row already names the durak and a second colour saying who is
+ * last would be two things at once.
+ */
+export function markStanding(el, id) {
+  if (!el) return el;
+  el.classList.remove('is-top', 'is-bottom');
+  if (isTop(id)) el.classList.add('is-top');
+  else if (isBottom(id)) el.classList.add('is-bottom');
+  return el;
+}
+
 /** A picture and a name together: how a player is shown everywhere but the felt. */
 export function playerEl(profile, { size = 'sm', fallback = 'unknown', card = true } = {}) {
   const el = document.createElement('span');
@@ -92,6 +111,7 @@ export function playerEl(profile, { size = 'sm', fallback = 'unknown', card = tr
   const name = document.createElement('span');
   name.className = 'player-chip__name';
   name.textContent = profile?.username ?? fallback;
+  markStanding(name, profile?.id);
   el.append(avatarEl(profile, { size }), name);
   if (card) attachProfileCard(el, profile);
   return el;
@@ -165,6 +185,7 @@ function fillProfileCard(profile) {
   const name = document.createElement('span');
   name.className = 'pcard__name';
   name.textContent = profile?.username ?? 'unknown';
+  markStanding(name, profile?.id);
 
   // No caption under it: on a panel that holds one number, and next to a
   // site whose every table has a Rating column, there is nothing else it

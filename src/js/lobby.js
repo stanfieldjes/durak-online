@@ -17,6 +17,7 @@ import {
   $, show, setText, clear, toast, relativeTime, playerEl, avatarEl, paintDelta,
   attachProfileCard,
 } from './ui.js';
+import { refreshStandings } from './standing.js';
 
 /**
  * How often a visible lobby re-reads the table list on its own. Realtime
@@ -58,6 +59,9 @@ function onWake() {
 
 export function enterLobby() {
   recentPage = 0;
+  // A table finishing anywhere can change hands at either end of the ladder,
+  // and the host names below are drawn in those colours.
+  refreshStandings();
   refresh();
   refreshRecent();
   // Each SUBSCRIBED, including rejoins after a dropped connection, re-reads the

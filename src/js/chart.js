@@ -210,36 +210,38 @@ export function ratingChart(points) {
     tip.hidden = false;
     tip.textContent = '';
 
-    const when = document.createElement('span');
-    when.className = 'chart__tip-when';
-    when.textContent = p.at ? shortDate(p.at) : '';
+    // Two lines. What the game did and what it left you on, then the details
+    // of which game it was — the first line is what the chart is about, the
+    // second is only there to place it.
+    const main = document.createElement('span');
+    main.className = 'chart__tip-main';
+
+    if (i > 0) {
+      const delta = document.createElement('span');
+      delta.className = `chart__tip-delta ${p.delta > 0 ? 'delta--up' : p.delta < 0 ? 'delta--down' : 'delta--flat'}`;
+      delta.textContent = formatRatingDelta(p.delta);
+
+      const arrow = document.createElement('span');
+      arrow.className = 'chart__tip-arrow';
+      arrow.textContent = '→';
+
+      main.append(delta, arrow);
+    }
 
     const rating = document.createElement('span');
     rating.className = 'chart__tip-rating';
     rating.textContent = formatRating(p.rating);
+    main.append(rating);
 
-    tip.append(when, rating);
+    const meta = document.createElement('span');
+    meta.className = 'chart__tip-meta';
+    // No need to say "durak": a rating only ever goes down for one reason.
+    meta.textContent = i === 0
+      ? 'initial rating'
+      : [p.at ? shortDate(p.at) : null, p.players ? `${p.players} players` : null]
+        .filter(Boolean).join(' · ');
 
-    if (i > 0) {
-      const line = document.createElement('span');
-      line.className = 'chart__tip-line';
-      const delta = document.createElement('span');
-      delta.className = `chart__tip-delta ${p.delta > 0 ? 'delta--up' : p.delta < 0 ? 'delta--down' : 'delta--flat'}`;
-      delta.textContent = formatRatingDelta(p.delta);
-      line.append(delta);
-      // No need to say "durak": a rating only ever goes down for one reason.
-      if (p.players) {
-        const at = document.createElement('span');
-        at.textContent = ` · ${p.players} players`;
-        line.append(at);
-      }
-      tip.append(line);
-    } else {
-      const line = document.createElement('span');
-      line.className = 'chart__tip-line';
-      line.textContent = 'before these games';
-      tip.append(line);
-    }
+    tip.append(main, meta);
 
     // Percentages of the same viewBox the chart is drawn in, so the tooltip
     // sits over its point however wide the panel happens to be.

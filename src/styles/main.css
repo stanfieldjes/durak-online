@@ -18,6 +18,14 @@
   --red-soft: #f0958f;
   --green-bright: #46c184;
   --score-down: #ff7a70;   /* reads as red, and stays legible on the felt */
+  /* The two ends of the ladder, both taken off the back of a card: the gold
+     of the emblem for whoever is top, and the cranberry of the cloth for
+     whoever is bottom. The gold is legible on the rail as it is. The
+     cranberry is not — #8a1628 on this background is about 1.4:1, which is
+     not text — so it is the same hue and saturation lifted to a lightness
+     that reads. Defined once here; the card back itself still uses --back. */
+  --gold: #d4a73a;
+  --back-ink: #e55d71;
 
   --card: #f4f1ea;
   --card-edge: #c6bfae;
@@ -204,6 +212,20 @@ body {
 /* A picture and a name side by side. */
 .player-chip { display: inline-flex; align-items: center; gap: 0.5rem; min-width: 0; }
 .player-chip__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/*
+  The two ends of the ladder, wherever a name is written: at the table, in the
+  lobby, on the leaderboard, on the panel that follows the pointer. Worked out
+  from the ratings rather than stored on anybody, so the colours change hands
+  as results come in — see standing.js.
+
+  Not in the recent-games list, which already names the durak of each game;
+  a second colour there saying who is last overall would be two claims in one
+  line. And never the only signal: the leaderboard prints the place beside the
+  name, and everywhere else the rating itself is next to it.
+*/
+.is-top { color: var(--gold); }
+.is-bottom { color: var(--back-ink); }
 
 /* ---------- the panel shown while the pointer rests on a player ---------- */
 
@@ -560,10 +582,12 @@ body {
   opacity: 0.55;
 }
 
-/* White, so colour on this chart means one thing only: the result of a game. */
+/* The same grey as the axis and the starting line, so the only thing on the
+   chart carrying a colour is the result of a game. The line is what joins the
+   points up; the points are what is being read. */
 .chart__line {
   fill: none;
-  stroke: var(--chalk);
+  stroke: var(--chalk-rail);
   stroke-width: 2;
   stroke-linejoin: round;
   stroke-linecap: round;
@@ -610,10 +634,21 @@ body {
 .chart__tip.is-left { transform: translate(-0.5rem, calc(-100% - 0.75rem)); }
 .chart__tip.is-right { transform: translate(calc(-100% + 0.5rem), calc(-100% - 0.75rem)); }
 
-.chart__tip-when { color: var(--chalk-rail); font-size: 0.72rem; }
-.chart__tip-rating { font-weight: 600; font-size: var(--step-0); font-variant-numeric: tabular-nums; }
-.chart__tip-line { color: var(--chalk-dim); }
-.chart__tip-delta { font-weight: 600; font-variant-numeric: tabular-nums; }
+/* What the game did, then what it left you on. */
+.chart__tip-main {
+  display: flex;
+  align-items: baseline;
+  gap: 0.3rem;
+  font-size: var(--step-0);
+  font-variant-numeric: tabular-nums;
+}
+
+.chart__tip-delta { font-weight: 600; }
+.chart__tip-arrow { color: var(--chalk-rail); }
+.chart__tip-rating { font-weight: 600; color: var(--chalk); }
+
+/* Which game it was. Quieter, and below. */
+.chart__tip-meta { color: var(--chalk-rail); font-size: 0.72rem; }
 
 /* ---------- choosing the square to keep ---------- */
 
@@ -1531,6 +1566,11 @@ button.card.is-selected {
 .ranks th:first-child, .ranks td:first-child { text-align: left; }
 .ranks th { color: var(--chalk-rail); font-weight: 500; font-size: var(--step--1); }
 .ranks tbody tr.is-me { background: rgba(200, 16, 46, 0.16); }
+
+/* On the leaderboard the two ends carry a little extra weight as well as the
+   colour, since this is the table the standing is actually about. */
+.ranks .player-chip__name.is-top,
+.ranks .player-chip__name.is-bottom { font-weight: 600; }
 
 .ranks__place {
   text-align: right;

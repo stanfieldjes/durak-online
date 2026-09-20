@@ -56,8 +56,9 @@ import { play as playSound, getVolume, setVolume, setSoundActive } from './sound
 import { initTableSize, tableShown, tableHidden } from './tablesize.js';
 import {
   $, show, setText, clear, toast, cardEl, avatarEl, paintRating, paintDelta,
-  attachProfileCard, hideProfileCard,
+  attachProfileCard, hideProfileCard, markStanding,
 } from './ui.js';
+import { refreshStandings } from './standing.js';
 
 /**
  * How long a finished round stays on the table before it clears itself.
@@ -1164,6 +1165,7 @@ function renderWaiting() {
       name.append(avatarEl(profile, { size: 'sm' }));
       const text = document.createElement('span');
       text.textContent = profile.username + (game.host_id === profile.id ? ' (host)' : '');
+      markStanding(text, profile.id);
       name.append(text);
 
       attachProfileCard(name, profile);
@@ -1281,6 +1283,7 @@ function opponentPanel(seat) {
   const name = document.createElement('span');
   name.className = 'player__name';
   name.textContent = profile?.username ?? `Seat ${seat + 1}`;
+  markStanding(name, profile?.id);
 
   const rating = document.createElement('span');
   rating.className = 'player__rating';
@@ -1623,6 +1626,12 @@ async function showResult() {
     /* fall back to what we have */
   }
 
+  // The game just finished may have changed hands at either end of the
+  // ladder, and this result list is the first place that would show. Read
+  // before the names are built, so they are written in the right colour
+  // rather than repainted afterwards.
+  await refreshStandings({ force: true });
+
   const deltas = game.rating_delta ?? {};
   const mine = deltas[session.user.id];
   const numeric = mine === undefined || mine === null ? null : Number(mine);
@@ -1675,6 +1684,7 @@ async function showResult() {
     name.append(avatarEl(seatRow.profile, { size: 'xs' }));
     const text = document.createElement('span');
     text.textContent = seatRow.profile?.username ?? `Seat ${seatRow.seat + 1}`;
+    markStanding(text, seatRow.profile?.id);
     name.append(text);
     attachProfileCard(name, seatRow.profile);
 

@@ -256,6 +256,35 @@ transaction, locking the profiles first so two tables finishing at the same
 instant cannot both work from the same stale number. A client never sends a
 rating or any part of one.
 
+The two ends of the ladder are coloured off the back of a card: whoever is top
+takes the gold of the emblem (`--gold`), whoever is bottom the cranberry of
+the cloth. Both follow the player around — at the table, in the lobby, on the
+leaderboard, on the panel that follows the pointer — with one exception, the
+recent-games list, where every row already names the durak of that game and a
+second colour saying who is last overall would be two claims in one line.
+
+The cranberry needed lifting to be used as text. `--back` itself is `#8a1628`,
+which against the rail is about 1.4:1 — not a contrast, an invisibility. So
+`--back-ink` is that hue and saturation raised to a lightness that reads
+(4.5:1 on the rail). It is the same red; it is just visible.
+
+Nothing stores who is at either end. `src/js/standing.js` derives both from
+the ratings and keeps them where anything drawing a name can ask, because the
+felt and the lobby know nothing about the standings of players who are not in
+front of them. It is re-read on boot, on entering the lobby or the
+leaderboard, and — forced, since the answer from ten seconds ago is the stale
+one — the moment a game ends. The leaderboard hands over the rows it has just
+fetched rather than sending for them again.
+
+Ends are compared on the *rounded* rating, which is what the place numbers
+beside them use: two players shown as 1013 are level as far as anyone reading
+the page can tell, and it would be odd for one to be gold over a difference
+nothing displays. So a tie at either end belongs to everyone in it. In a field
+of one, or a field where everyone is level, there is no lead to hold and
+nobody is coloured at all. The colour is never the only signal — the
+leaderboard prints the place beside the name, and everywhere else the rating
+itself is next to it.
+
 ## Names
 
 Usernames may be in any script — Дурак and 田中 are names like any other. The
@@ -333,6 +362,14 @@ clipping, and it takes no pointer events, so it can never be in the way of the
 table underneath. Triggers are focusable, so the panel is reachable from the
 keyboard too.
 
+The picture is the tallest thing on it, which is what makes the panel's
+padding read as an even margin around the picture rather than as the distance
+to the nearest edge: the row takes its height from the picture, so the space
+above and below it is the padding and nothing else. The three lines beside it
+come to about 66px against the picture's 72, and none of them can wrap — a
+long name is clipped with an ellipsis. Anything added to that column has to
+stay inside the 72, or a gap opens above and below the picture.
+
 ## Your own rating, over time
 
 The account page draws the rating as a line, one point per finished game.
@@ -345,17 +382,20 @@ above it, even for a player with more games than the hundred the chart reads.
 Games are spaced evenly along the line rather than placed by the clock. Eight
 friends play in bursts; a true time axis would pile a fortnight of games into
 one pixel and leave the rest of the chart empty. Since the spacing is not
-really time, the axis carries no labels at all — the tooltip gives the date of
-the game under the pointer, along with the size of the table and what the game
-did to the rating.
+really time, the axis carries no labels at all — everything about a particular
+game is in the tooltip instead, on two lines: what the game did and what it
+left you on (`−19.3 → 984`), then, quieter and below, which game it was
+(`Sep 8 · 5 players`).
 
-The line is white and the points are coloured, so colour on the chart means
-one thing only: green for a game you got out of, red for one you were the
-durak in. Because every point carries a result, none can be dropped once the
-run gets long the way an ordinary line chart thins its markers out; they
-shrink instead, down to a floor where a dot is still a dot. Nothing says
-"durak" in words anywhere on the chart — a rating only ever falls for one
-reason, so the red already said it.
+The line is grey — the same grey as the axis and the starting line — and the
+points are coloured, so the only thing on the chart carrying a colour is the
+result of a game: green for one you got out of, red for one you were the durak
+in. The line is there to join the points up; the points are what is being
+read. Because every point carries a result, none can be dropped once the run
+gets long the way an ordinary line chart thins its markers out; they shrink
+instead, down to a floor where a dot is still a dot. Nothing says "durak" in
+words anywhere on the chart — a rating only ever falls for one reason, so the
+red already said it.
 
 ## Why the anon key is in the repo
 
@@ -425,6 +465,7 @@ src/js/tablesize.js      fits the table to the window; the drag-to-resize corner
 src/js/sound.js          sound effects, pooled and mutable
 src/audio/               the clips themselves
 src/js/rating.js         rating model, mirrored by public.rating_changes()
+src/js/standing.js       who is top and bottom of the ladder, for the colours
 src/js/db.js             every Supabase call lives here
 src/js/game.js           table rendering, input, spectating, stale-write retry
 src/js/account.js        your own name, picture and rating

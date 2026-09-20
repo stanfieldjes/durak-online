@@ -43,6 +43,8 @@ const NO_DOM = JSDOM ? false : 'needs jsdom: run `npm install` first';
 let ratingChart;
 let ui;
 let cropBounds;
+let leaderboard;
+let db;
 let window;
 
 /** Enough of a browser for the three modules under test. */
@@ -75,11 +77,21 @@ before(async () => {
     + 'export const MAX_PLAYERS = 8;\n');
   writeFileSync(join(dir, 'supabase.js'),
     'export const supabase = {};\nexport const readableError = (e) => String(e?.message ?? e);\n');
+  // Enough of the data layer and the session for leaderboard.js, whose own
+  // work — the placings, and who is top — is what is being checked.
+  writeFileSync(join(dir, 'db.js'),
+    'export const fake = { rows: [] };\n'
+    + 'export async function getLeaderboard() { return fake.rows; }\n');
+  writeFileSync(join(dir, 'auth.js'),
+    'export const session = { user: null, profile: null };\n'
+    + 'export function renderWhoami() {}\nexport function nameProblem() { return null; }\n');
 
   ({ cropBounds } = await import(pathToFileURL(join(dir, 'cropper.js')).href));
   if (!JSDOM) return;
   ({ ratingChart } = await import(pathToFileURL(join(dir, 'chart.js')).href));
   ui = await import(pathToFileURL(join(dir, 'ui.js')).href);
+  leaderboard = await import(pathToFileURL(join(dir, 'leaderboard.js')).href);
+  db = await import(pathToFileURL(join(dir, 'db.js')).href);
 });
 
 /* ---------------- the crop square ---------------- */
@@ -335,4 +347,108 @@ test('a name in another script keeps its first character whole', { skip: NO_DOM 
   const el = ui.avatarEl({ username: '🀄 mahjong' });
   assert.equal(el.textContent, '🀄');
   assert.equal(ui.avatarEl({ username: 'Дурак' }).textContent, 'Д');
+});
+
+/* ---------------- the leaderboard ---------------- */
+
+/**
+ * Draw the table from `rows` and report what each row came out as.
+ *
+ * Replaces its own container rather than clearing the whole page: ui.js keeps
+ * one hover panel on the body from the first time it is asked for, and wiping
+ * the body would detach it and break whatever ran next.
+ */
+async function standings(rows) {
+  db.fake.rows = rows;
+  document.querySelector('#ranks-mount')?.remove();
+  const mount = document.createElement('div');
+  mount.id = 'ranks-mount';
+  mount.innerHTML = '<table><tbody id="ranks-body"></tbody></table>'
+    + '<p id="no-ranks" hidden></p>';
+  document.body.append(mount);
+  await leaderboard.enterLeaderboard();
+  return [...document.querySelectorAll('#ranks-body tr')].map((tr) => {
+    const name = tr.querySelector('.player-chip__name');
+    return {
+      place: tr.querySelector('.ranks__place').textContent,
+      name: name.textContent,
+      gold: name.classList.contains('is-top'),
+      red: name.classList.contains('is-bottom'),
+    };
+  });
+}
+
+const rank = (username, rating, over = {}) => ({
+  id: username, username, rating, games: 10, duraks: 3, avatar_url: null, ...over,
+});
+
+test('the top name is gold and the bottom name is red', { skip: NO_DOM }, async () => {
+  const rows = await standings([
+    rank('Eli', 1090.2), rank('gia', 1025), rank('bo', 980.694517),
+  ]);
+  assert.deepEqual(rows.map((r) => [r.name, r.gold, r.red]), [
+    ['Eli', true, false],
+    ['gia', false, false],
+    ['bo', false, true],
+  ]);
+});
+
+test('it follows the lead rather than staying put', { skip: NO_DOM }, async () => {
+  // Nothing stores who is top; it is read off the ratings every time the
+  // table is drawn, so the next result moves it.
+  await standings([rank('Eli', 1090.2), rank('gia', 1025)]);
+  const after = await standings([rank('gia', 1101), rank('Eli', 1090.2)]);
+  assert.deepEqual(after.map((r) => [r.name, r.gold, r.red]), [
+    ['gia', true, false],
+    ['Eli', false, true],
+  ]);
+});
+
+test('a tie for first is gold for everyone in it', { skip: NO_DOM }, async () => {
+  // Equal ratings already share the place number, so they share the colour.
+  const rows = await standings([
+    rank('Eli', 1012.4), rank('gia', 1012.2), rank('bo', 970),
+  ]);
+  assert.deepEqual(rows.map((r) => r.place), ['1', '1', '3']);
+  assert.deepEqual(rows.map((r) => r.gold), [true, true, false]);
+  assert.deepEqual(rows.map((r) => r.red), [false, false, true]);
+});
+
+test('an empty leaderboard says so and paints nobody', { skip: NO_DOM }, async () => {
+  const rows = await standings([]);
+  assert.deepEqual(rows, []);
+  assert.equal(document.querySelector('#no-ranks').hidden, false);
+});
+
+test('one player alone is neither top nor bottom', { skip: NO_DOM }, async () => {
+  // Nor is a table where everyone is level: there is no lead to hold, and
+  // colouring the only name gold and red at once says nothing.
+  assert.deepEqual(
+    (await standings([rank('solo', 1000)])).map((r) => [r.gold, r.red]),
+    [[false, false]],
+  );
+  assert.deepEqual(
+    (await standings([rank('a', 1000), rank('b', 1000), rank('c', 1000.4)]))
+      .map((r) => [r.gold, r.red]),
+    [[false, false], [false, false], [false, false]],
+  );
+});
+
+test('the colours reach a name drawn anywhere, not just the table', { skip: NO_DOM }, async () => {
+  await standings([rank('Eli', 1090.2), rank('gia', 1025), rank('bo', 970)]);
+
+  // The hover panel builds its own name, and the felt builds three more.
+  const trigger = document.createElement('span');
+  document.body.append(trigger);
+  ui.attachProfileCard(trigger, { id: 'Eli', username: 'Eli', rating: 1090.2 });
+  trigger.dispatchEvent(new window.FocusEvent('focus'));
+  assert.ok(document.querySelector('.pcard__name').classList.contains('is-top'));
+  ui.hideProfileCard();
+
+  const chip = ui.playerEl({ id: 'bo', username: 'bo', rating: 970 }, { card: false });
+  assert.ok(chip.querySelector('.player-chip__name').classList.contains('is-bottom'));
+
+  // markStanding is what the felt calls on a name it has built itself.
+  const plain = ui.markStanding(document.createElement('span'), 'gia');
+  assert.equal(plain.className, '');
 });

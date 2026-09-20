@@ -1,12 +1,10 @@
 <section class="panel panel--lobby" data-route="lobby" hidden>
   <div class="lobby__active" id="active-section" hidden>
-    <h2 class="heading">Your games in progress</h2>
+    <h2 class="heading">In progress</h2>
     <ul class="tables" id="active-games"></ul>
   </div>
 
   <div class="lobby__act">
-    <h1 class="display">Tables</h1>
-    
     <div class="lobby__buttons">
       <button type="button" class="btn btn--primary" id="create-game">Open a table</button>
       <button type="button" class="btn" id="refresh-games">Refresh</button>
@@ -17,13 +15,13 @@
   <div class="lobby__tables">
     <h2 class="heading">Tables</h2>
     <ul class="tables" id="open-games"></ul>
-    <p class="empty" id="no-games" hidden>No tables open or in play.</p>
+    <p class="empty" id="no-games" hidden>None</p>
   </div>
 
   <div class="lobby__history">
-    <h2 class="heading">Recent</h2>
+    <h2 class="heading">History</h2>
     <ul class="history" id="recent-games"></ul>
-    <p class="empty" id="no-history" hidden>No finished games yet.</p>
+    <p class="empty" id="no-history" hidden>None</p>
 
     <nav class="pager" id="recent-pager" aria-label="Recent games" hidden>
       <button type="button" class="btn btn--quiet" id="recent-prev">&lsaquo; Newer</button>

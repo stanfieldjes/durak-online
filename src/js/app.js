@@ -14,6 +14,7 @@ import { initGame, enterGame, leaveGame } from './game.js';
 import { enterLeaderboard } from './leaderboard.js';
 import { initAccount, enterAccount } from './account.js';
 import { initSound } from './sound.js';
+import { refreshStandings } from './standing.js';
 
 let current = null;
 
@@ -86,6 +87,9 @@ async function boot() {
   }
 
   initSound();
+  // Who is top and who is bottom, so the first name drawn anywhere is already
+  // in the right colour. Never worth blocking the boot over.
+  refreshStandings();
   initAuthView(() => { location.hash = '#/'; route(); });
   initLobby();
   initGame();

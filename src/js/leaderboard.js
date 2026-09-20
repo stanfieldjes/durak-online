@@ -3,12 +3,16 @@ import { readableError } from './supabase.js';
 import { session } from './auth.js';
 import { formatRating } from './rating.js';
 import { $, show, clear, toast, playerEl } from './ui.js';
+import { setStandings } from './standing.js';
 
 export async function enterLeaderboard() {
   const body = $('#ranks-body');
   clear(body);
   try {
     const rows = await getLeaderboard();
+    // The ends of the ladder are in this list already, so hand them over
+    // rather than making the rest of the site send for them again.
+    setStandings(rows);
     show($('#no-ranks'), rows.length === 0);
 
     // The view already orders by rating, so a row's position in the list is
