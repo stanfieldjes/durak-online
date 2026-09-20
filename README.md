@@ -67,6 +67,19 @@ Push to `main`. In the repo's Settings → Pages, set Source to **GitHub Actions
 The workflow runs the tests, builds, and publishes to
 `https://username.github.io/durak-online/`.
 
+Once it's live, a plain reload is enough to pick up a new deploy — nothing
+special to do on your end, for you or for anyone else at the table. Every
+module the site ships carries a `?v=<hash>` on every local import, one shared
+hash for the whole build (`build.py`, `_version_imports`), so a deploy that
+touches one file still changes the URL of every file that imports it. That is
+what stops a half-old, half-new page: without it, only the entry script's own
+`<script src>` was versioned, and a browser could keep serving yesterday's
+`ui.js` from disk underneath today's freshly-fetched `app.js` — which is
+exactly what happened once, and is now what `tests/build.test.mjs` checks for.
+If a page still looks like the old site right after a push, that is almost
+certainly the browser's own disk cache rather than a failed deploy; a hard
+refresh (Ctrl/Cmd+Shift+R) or an incognito window confirms it and clears it.
+
 ## Rules implemented
 
 Six-card hands, lowest trump opens, 2 to 8 players.
@@ -417,6 +430,7 @@ tests/sync.test.mjs      SQL contract, concurrency, rating behaviour
 tests/rating.test.mjs    the rating model on its own
 tests/markup.test.mjs    templates, stylesheet and scripts agree with each other
 tests/view.test.mjs      the crop square, the rating line, the hover panel
+tests/build.test.mjs     every shipped module is cache-busted together
 tests/sql/               runs schema.sql against a throwaway Postgres, both on
                          an empty database and over the previous schema
 ```

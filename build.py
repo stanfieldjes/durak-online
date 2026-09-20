@@ -149,13 +149,41 @@ def write_js_config(config: dict, build_hash: str) -> None:
     (DIST / "js" / "config.js").write_text(body, encoding="utf-8")
 
 
+#: A quoted specifier in an import/export/dynamic-import that points at
+#: another file in this build — './ui.js', '../foo/bar.js'. Never matches a
+#: bare or absolute specifier (supabase.js imports one of those, from esm.sh,
+#: and it must reach the network unchanged).
+LOCAL_IMPORT = re.compile(r"""(['"])(\.\.?/[^'"]+?\.js)\1""")
+
+
+def _version_imports(text: str, js_hash: str) -> str:
+    """
+    Append ?v=<js_hash> to every local import specifier in a module's source.
+
+    JS files keep stable filenames — renaming them would mean rewriting every
+    import site to a hashed name, which is the same problem in a different
+    shape. A query string does the same job without that: it changes the URL
+    the browser caches under, while the path the module lives at stays put.
+
+    One hash for every file, not one per file's own content, and deliberately
+    so: a deploy that only touches ui.js must still bust the cached copies of
+    every file that imports it, or a browser can end up running old game.js
+    against new ui.js — two files that were never tested against each other,
+    which is exactly how this went wrong before this existed.
+    """
+    return LOCAL_IMPORT.sub(lambda m: f"{m.group(1)}{m.group(2)}?v={js_hash}{m.group(1)}", text)
+
+
 def collect_assets(config: dict) -> dict:
     """
     Copy css/js into dist and return a map of source path -> served URL.
 
     CSS gets a content hash in the filename. JS keeps stable filenames because
-    ES module imports reference each other by path; the entry point carries a
-    ?v= query instead, which is enough to bust the 10-minute Pages cache.
+    ES module imports reference each other by path — but every import site,
+    in every file, carries a ?v= query for the same reason the entry point's
+    own <script src> does: without it, a browser can serve a stale disk-cached
+    module underneath a freshly fetched one, long after the 10-minute Pages
+    cache has moved on.
     """
     base = config["site"]["basePath"]
     assets: dict[str, str] = {}
@@ -174,14 +202,15 @@ def collect_assets(config: dict) -> dict:
             if clip.is_file():
                 shutil.copy2(clip, DIST / "audio" / clip.name)
 
-    (DIST / "js").mkdir(parents=True, exist_ok=True)
     js_bytes = json.dumps(config, sort_keys=True).encode()  # config ships inside js/config.js
     for js in sorted((SRC / "js").glob("*.js")):
-        data = js.read_bytes()
-        js_bytes += data
-        (DIST / "js" / js.name).write_bytes(data)
+        js_bytes += js.read_bytes()
     js_hash = short_hash(js_bytes)
+
+    (DIST / "js").mkdir(parents=True, exist_ok=True)
     for js in sorted((SRC / "js").glob("*.js")):
+        text = js.read_text(encoding="utf-8")
+        (DIST / "js" / js.name).write_text(_version_imports(text, js_hash), encoding="utf-8")
         assets[f"js/{js.name}"] = f"{base}js/{js.name}?v={js_hash}"
 
     return assets, js_hash
