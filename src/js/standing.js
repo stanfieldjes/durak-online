@@ -1,22 +1,21 @@
 /**
- * Who is top of the ladder and who is bottom.
+ * Who is top of the ladder.
  *
  * The leaderboard works this out for its own table, but a name is shown all
  * over the site — at the table, in the lobby, on the panel that follows the
  * pointer — and none of those places know anything about the standings of
- * players who are not in front of them. So the ends of the ladder are read
- * once and kept here, where anything drawing a name can ask.
+ * players who are not in front of them. So the lead is read once and kept
+ * here, where anything drawing a name can ask.
  *
- * Nothing is stored on a profile. The ends are derived from the ratings every
- * time this is refreshed, so they move as results come in rather than having
+ * Nothing is stored on a profile. The lead is derived from the ratings every
+ * time this is refreshed, so it moves as results come in rather than having
  * to be maintained.
  */
 import { getLeaderboard } from './db.js';
 import { formatRating } from './rating.js';
 
-/** Ids, not one id: a tie at either end belongs to everyone in it. */
+/** Ids, not one id: a tie at the top belongs to everyone in it. */
 let top = new Set();
-let bottom = new Set();
 
 let read = 0;
 
@@ -28,10 +27,9 @@ let read = 0;
 const FRESH_MS = 15000;
 
 export const isTop = (id) => Boolean(id) && top.has(id);
-export const isBottom = (id) => Boolean(id) && bottom.has(id);
 
 /**
- * Work out the ends from rows already in hand, so the leaderboard — which has
+ * Work out the lead from rows already in hand, so the leaderboard — which has
  * just fetched exactly this — does not send for them a second time.
  *
  * Compared on the rounded figure rather than the exact one, which is what the
@@ -39,24 +37,21 @@ export const isBottom = (id) => Boolean(id) && bottom.has(id);
  * as anyone reading the table can tell, and it would be strange for one of
  * them to be gold over a difference nothing on the page displays.
  *
- * Nobody is at either end of a table of one, or of a table where everyone is
- * level — there is no lead to hold. `rows` arrives ordered by rating, best
- * first, which is how the leaderboard view is defined.
+ * Nobody leads a table of one, or a table where everyone is level — there is
+ * no lead to hold. `rows` arrives ordered by rating, best first, which is how
+ * the leaderboard view is defined.
  */
 export function setStandings(rows) {
   top = new Set();
-  bottom = new Set();
   read = Date.now();
   if (!Array.isArray(rows) || rows.length < 2) return;
 
   const shown = (row) => formatRating(row.rating);
   const best = shown(rows[0]);
-  const worst = shown(rows[rows.length - 1]);
-  if (best === worst) return;
+  if (best === shown(rows[rows.length - 1])) return;
 
   for (const row of rows) {
     if (shown(row) === best) top.add(row.id);
-    else if (shown(row) === worst) bottom.add(row.id);
   }
 }
 
@@ -67,9 +62,6 @@ export function setStandings(rows) {
  * ordinary ink is a fine outcome, and a toast about it would be noise in the
  * middle of a game. `force` is for the moment a game ends, when the standings
  * have just changed and the answer from ten seconds ago is the stale one.
- *
- * The bottom is the bottom of the leaderboard as it is shown, which is capped
- * at the same number of rows the page lists.
  */
 export async function refreshStandings({ force = false } = {}) {
   if (!force && Date.now() - read < FRESH_MS) return;

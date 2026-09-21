@@ -373,7 +373,6 @@ async function standings(rows) {
       place: tr.querySelector('.ranks__place').textContent,
       name: name.textContent,
       gold: name.classList.contains('is-top'),
-      red: name.classList.contains('is-bottom'),
     };
   });
 }
@@ -382,14 +381,12 @@ const rank = (username, rating, over = {}) => ({
   id: username, username, rating, games: 10, duraks: 3, avatar_url: null, ...over,
 });
 
-test('the top name is gold and the bottom name is red', { skip: NO_DOM }, async () => {
+test('the name at the top of the leaderboard is the gold one', { skip: NO_DOM }, async () => {
   const rows = await standings([
     rank('Eli', 1090.2), rank('gia', 1025), rank('bo', 980.694517),
   ]);
-  assert.deepEqual(rows.map((r) => [r.name, r.gold, r.red]), [
-    ['Eli', true, false],
-    ['gia', false, false],
-    ['bo', false, true],
+  assert.deepEqual(rows.map((r) => [r.name, r.gold]), [
+    ['Eli', true], ['gia', false], ['bo', false],
   ]);
 });
 
@@ -398,10 +395,7 @@ test('it follows the lead rather than staying put', { skip: NO_DOM }, async () =
   // table is drawn, so the next result moves it.
   await standings([rank('Eli', 1090.2), rank('gia', 1025)]);
   const after = await standings([rank('gia', 1101), rank('Eli', 1090.2)]);
-  assert.deepEqual(after.map((r) => [r.name, r.gold, r.red]), [
-    ['gia', true, false],
-    ['Eli', false, true],
-  ]);
+  assert.deepEqual(after.map((r) => [r.name, r.gold]), [['gia', true], ['Eli', false]]);
 });
 
 test('a tie for first is gold for everyone in it', { skip: NO_DOM }, async () => {
@@ -411,7 +405,6 @@ test('a tie for first is gold for everyone in it', { skip: NO_DOM }, async () =>
   ]);
   assert.deepEqual(rows.map((r) => r.place), ['1', '1', '3']);
   assert.deepEqual(rows.map((r) => r.gold), [true, true, false]);
-  assert.deepEqual(rows.map((r) => r.red), [false, false, true]);
 });
 
 test('an empty leaderboard says so and paints nobody', { skip: NO_DOM }, async () => {
@@ -420,17 +413,11 @@ test('an empty leaderboard says so and paints nobody', { skip: NO_DOM }, async (
   assert.equal(document.querySelector('#no-ranks').hidden, false);
 });
 
-test('one player alone is neither top nor bottom', { skip: NO_DOM }, async () => {
-  // Nor is a table where everyone is level: there is no lead to hold, and
-  // colouring the only name gold and red at once says nothing.
+test('nobody leads a field of one, or a field that is level', { skip: NO_DOM }, async () => {
+  assert.deepEqual((await standings([rank('solo', 1000)])).map((r) => r.gold), [false]);
   assert.deepEqual(
-    (await standings([rank('solo', 1000)])).map((r) => [r.gold, r.red]),
-    [[false, false]],
-  );
-  assert.deepEqual(
-    (await standings([rank('a', 1000), rank('b', 1000), rank('c', 1000.4)]))
-      .map((r) => [r.gold, r.red]),
-    [[false, false], [false, false], [false, false]],
+    (await standings([rank('a', 1000), rank('b', 1000), rank('c', 1000.4)])).map((r) => r.gold),
+    [false, false, false],
   );
 });
 
@@ -445,10 +432,11 @@ test('the colours reach a name drawn anywhere, not just the table', { skip: NO_D
   assert.ok(document.querySelector('.pcard__name').classList.contains('is-top'));
   ui.hideProfileCard();
 
-  const chip = ui.playerEl({ id: 'bo', username: 'bo', rating: 970 }, { card: false });
-  assert.ok(chip.querySelector('.player-chip__name').classList.contains('is-bottom'));
-
   // markStanding is what the felt calls on a name it has built itself.
-  const plain = ui.markStanding(document.createElement('span'), 'gia');
-  assert.equal(plain.className, '');
+  assert.ok(ui.markStanding(document.createElement('span'), 'Eli').classList.contains('is-top'));
+
+  // Everybody else is left in the ordinary ink, bottom of the table included.
+  const chip = ui.playerEl({ id: 'bo', username: 'bo', rating: 970 }, { card: false });
+  assert.equal(chip.querySelector('.player-chip__name').className, 'player-chip__name');
+  assert.equal(ui.markStanding(document.createElement('span'), 'gia').className, '');
 });

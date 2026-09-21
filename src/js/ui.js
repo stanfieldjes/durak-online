@@ -1,6 +1,6 @@
 import { SUIT_GLYPH, SUIT_NAME } from './durak.js';
 import { formatRating, formatRatingDelta } from './rating.js';
-import { isTop, isBottom } from './standing.js';
+import { isTop } from './standing.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -87,20 +87,16 @@ export function avatarEl(profile, { size = 'sm' } = {}) {
 }
 
 /**
- * Colour a name by where its owner sits on the ladder: gold at the top, the
- * red off the back of the cards at the bottom, ordinary ink in between.
+ * Gold for whoever is top of the ladder, ordinary ink for everybody else.
  *
  * Called at every place a name is written rather than being baked into one
  * component, because the felt, the lobby and the leaderboard each build their
  * own. The one place it is deliberately not called is the recent-games list,
- * where every row already names the durak and a second colour saying who is
- * last would be two things at once.
+ * where every row already names the durak of that game.
  */
 export function markStanding(el, id) {
   if (!el) return el;
-  el.classList.remove('is-top', 'is-bottom');
-  if (isTop(id)) el.classList.add('is-top');
-  else if (isBottom(id)) el.classList.add('is-bottom');
+  el.classList.toggle('is-top', isTop(id));
   return el;
 }
 

@@ -18,14 +18,9 @@
   --red-soft: #f0958f;
   --green-bright: #46c184;
   --score-down: #ff7a70;   /* reads as red, and stays legible on the felt */
-  /* The two ends of the ladder, both taken off the back of a card: the gold
-     of the emblem for whoever is top, and the cranberry of the cloth for
-     whoever is bottom. The gold is legible on the rail as it is. The
-     cranberry is not — #8a1628 on this background is about 1.4:1, which is
-     not text — so it is the same hue and saturation lifted to a lightness
-     that reads. Defined once here; the card back itself still uses --back. */
+  /* The gold of the emblem on the back of the cards, borrowed for whoever is
+     top of the ladder. Defined once here and used by both. */
   --gold: #d4a73a;
-  --back-ink: #e55d71;
 
   --card: #f4f1ea;
   --card-edge: #c6bfae;
@@ -214,18 +209,16 @@ body {
 .player-chip__name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /*
-  The two ends of the ladder, wherever a name is written: at the table, in the
-  lobby, on the leaderboard, on the panel that follows the pointer. Worked out
-  from the ratings rather than stored on anybody, so the colours change hands
-  as results come in — see standing.js.
+  Whoever is top of the ladder, wherever their name is written: at the table,
+  in the lobby, on the leaderboard, on the panel that follows the pointer.
+  Worked out from the ratings rather than stored on anybody, so the gold
+  changes hands as results come in — see standing.js.
 
-  Not in the recent-games list, which already names the durak of each game;
-  a second colour there saying who is last overall would be two claims in one
-  line. And never the only signal: the leaderboard prints the place beside the
-  name, and everywhere else the rating itself is next to it.
+  Not in the recent-games list, which already names the durak of each game.
+  And never the only signal: the leaderboard prints the place beside the name,
+  and everywhere else the rating itself is next to it.
 */
 .is-top { color: var(--gold); }
-.is-bottom { color: var(--back-ink); }
 
 /* ---------- the panel shown while the pointer rests on a player ---------- */
 
@@ -1567,10 +1560,9 @@ button.card.is-selected {
 .ranks th { color: var(--chalk-rail); font-weight: 500; font-size: var(--step--1); }
 .ranks tbody tr.is-me { background: rgba(200, 16, 46, 0.16); }
 
-/* On the leaderboard the two ends carry a little extra weight as well as the
+/* On the leaderboard the lead carries a little extra weight as well as the
    colour, since this is the table the standing is actually about. */
-.ranks .player-chip__name.is-top,
-.ranks .player-chip__name.is-bottom { font-weight: 600; }
+.ranks .player-chip__name.is-top { font-weight: 600; }
 
 .ranks__place {
   text-align: right;

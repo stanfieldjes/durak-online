@@ -256,34 +256,27 @@ transaction, locking the profiles first so two tables finishing at the same
 instant cannot both work from the same stale number. A client never sends a
 rating or any part of one.
 
-The two ends of the ladder are coloured off the back of a card: whoever is top
-takes the gold of the emblem (`--gold`), whoever is bottom the cranberry of
-the cloth. Both follow the player around — at the table, in the lobby, on the
-leaderboard, on the panel that follows the pointer — with one exception, the
-recent-games list, where every row already names the durak of that game and a
-second colour saying who is last overall would be two claims in one line.
+Whoever is top of the ladder has their name in the gold of the emblem on the
+back of the cards (`--gold`). It follows them around — at the table, in the
+lobby, on the leaderboard, on the panel that follows the pointer — with one
+exception, the recent-games list, where every row already names the durak of
+that game.
 
-The cranberry needed lifting to be used as text. `--back` itself is `#8a1628`,
-which against the rail is about 1.4:1 — not a contrast, an invisibility. So
-`--back-ink` is that hue and saturation raised to a lightness that reads
-(4.5:1 on the rail). It is the same red; it is just visible.
+Nothing stores who is leading. `src/js/standing.js` derives it from the
+ratings and keeps it where anything drawing a name can ask, because the felt
+and the lobby know nothing about the standings of players who are not in front
+of them. It is re-read on boot, on entering the lobby or the leaderboard, and
+— forced, since the answer from ten seconds ago is the stale one — the moment
+a game ends. The leaderboard hands over the rows it has just fetched rather
+than sending for them again.
 
-Nothing stores who is at either end. `src/js/standing.js` derives both from
-the ratings and keeps them where anything drawing a name can ask, because the
-felt and the lobby know nothing about the standings of players who are not in
-front of them. It is re-read on boot, on entering the lobby or the
-leaderboard, and — forced, since the answer from ten seconds ago is the stale
-one — the moment a game ends. The leaderboard hands over the rows it has just
-fetched rather than sending for them again.
-
-Ends are compared on the *rounded* rating, which is what the place numbers
-beside them use: two players shown as 1013 are level as far as anyone reading
+The lead is decided on the *rounded* rating, which is what the place numbers
+beside it use: two players shown as 1013 are level as far as anyone reading
 the page can tell, and it would be odd for one to be gold over a difference
-nothing displays. So a tie at either end belongs to everyone in it. In a field
-of one, or a field where everyone is level, there is no lead to hold and
-nobody is coloured at all. The colour is never the only signal — the
-leaderboard prints the place beside the name, and everywhere else the rating
-itself is next to it.
+nothing displays. So a tie at the top belongs to everyone in it. In a field of
+one, or a field where everyone is level, there is no lead to hold and nobody
+is coloured. The gold is never the only signal: the leaderboard prints the
+place beside the name, and everywhere else the rating itself is next to it.
 
 ## Names
 
@@ -465,7 +458,7 @@ src/js/tablesize.js      fits the table to the window; the drag-to-resize corner
 src/js/sound.js          sound effects, pooled and mutable
 src/audio/               the clips themselves
 src/js/rating.js         rating model, mirrored by public.rating_changes()
-src/js/standing.js       who is top and bottom of the ladder, for the colours
+src/js/standing.js       who is top of the ladder, for the gold
 src/js/db.js             every Supabase call lives here
 src/js/game.js           table rendering, input, spectating, stale-write retry
 src/js/account.js        your own name, picture and rating
