@@ -12,7 +12,6 @@
  * to be maintained.
  */
 import { getLeaderboard } from './db.js';
-import { formatRating } from './rating.js';
 
 /** Ids, not one id: a tie at the top belongs to everyone in it. */
 let top = new Set();
@@ -29,29 +28,59 @@ const FRESH_MS = 15000;
 export const isTop = (id) => Boolean(id) && top.has(id);
 
 /**
+ * The rating as the page prints it. Must round the way formatRating does, or
+ * two players shown the same number would be ordered by a difference nobody
+ * can see.
+ */
+const shownRating = (row) => Math.round(Number(row?.rating ?? 0));
+
+/**
+ * The order the ladder is read in: the rating as it is shown, and then games
+ * played.
+ *
+ * Ratings are compared rounded rather than exact because that is the figure
+ * on the page — being placed above somebody over a hundredth of a point that
+ * is displayed nowhere is not a placing anyone can check. That makes ties on
+ * the visible number common, so games played settles them: the same rating
+ * off more games is the better-established one.
+ *
+ * Note this is not the order the `leaderboard` view returns, which sorts on
+ * the exact rating and so can put 1003.4-off-5-games above 1003.2-off-20.
+ * Rows are sorted through here before they are placed or drawn.
+ */
+export function compareRank(a, b) {
+  return (shownRating(b) - shownRating(a)) || ((b?.games ?? 0) - (a?.games ?? 0));
+}
+
+/** Leaderboard rows in ladder order. Does not disturb the array it is given. */
+export const rankRows = (rows) => [...(rows ?? [])].sort(compareRank);
+
+/**
+ * Two players the ladder genuinely cannot separate: same rating on the page,
+ * same number of games behind it. They share a place, and the gold with it —
+ * there is nothing left to tell them apart by that anyone could check.
+ */
+export const rankTied = (a, b) => compareRank(a, b) === 0;
+
+/**
  * Work out the lead from rows already in hand, so the leaderboard — which has
  * just fetched exactly this — does not send for them a second time.
  *
- * Compared on the rounded figure rather than the exact one, which is what the
- * place numbers beside them use: two players shown as 1013 are level as far
- * as anyone reading the table can tell, and it would be strange for one of
- * them to be gold over a difference nothing on the page displays.
- *
- * Nobody leads a table of one, or a table where everyone is level — there is
- * no lead to hold. `rows` arrives ordered by rating, best first, which is how
- * the leaderboard view is defined.
+ * Nobody leads a table of one, or a table where every player is level on both
+ * counts: there is no lead to hold.
  */
 export function setStandings(rows) {
   top = new Set();
   read = Date.now();
   if (!Array.isArray(rows) || rows.length < 2) return;
 
-  const shown = (row) => formatRating(row.rating);
-  const best = shown(rows[0]);
-  if (best === shown(rows[rows.length - 1])) return;
+  const ordered = rankRows(rows);
+  const best = ordered[0];
+  if (rankTied(best, ordered[ordered.length - 1])) return;
 
-  for (const row of rows) {
-    if (shown(row) === best) top.add(row.id);
+  for (const row of ordered) {
+    if (!rankTied(row, best)) break;   // sorted, so the rest are below too
+    top.add(row.id);
   }
 }
 

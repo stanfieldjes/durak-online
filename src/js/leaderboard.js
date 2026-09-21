@@ -3,30 +3,32 @@ import { readableError } from './supabase.js';
 import { session } from './auth.js';
 import { formatRating } from './rating.js';
 import { $, show, clear, toast, playerEl } from './ui.js';
-import { setStandings } from './standing.js';
+import { setStandings, rankRows, rankTied } from './standing.js';
 
 export async function enterLeaderboard() {
   const body = $('#ranks-body');
   clear(body);
   try {
-    const rows = await getLeaderboard();
-    // The ends of the ladder are in this list already, so hand them over
-    // rather than making the rest of the site send for them again.
+    // Re-sorted here rather than taken as the view returns it: the view
+    // orders on the exact rating, and the ladder is read on the rating as it
+    // is printed, with games played settling the ties that makes common.
+    const rows = rankRows(await getLeaderboard());
+    // The lead is in this list already, so hand it over rather than making
+    // the rest of the site send for it again.
     setStandings(rows);
     show($('#no-ranks'), rows.length === 0);
 
-    // The view already orders by rating, so a row's position in the list is
-    // its place. Equal ratings share a place rather than being separated
-    // arbitrarily — which, with everyone starting on the same number, is
-    // exactly what the first few games look like.
+    // A row's position in the sorted list is its place. Players the ladder
+    // cannot separate at all — same printed rating, same games — share one
+    // rather than being split arbitrarily, which with everyone starting on
+    // the same number is exactly what the first few games look like.
     let place = 0;
     let previous = null;
 
     rows.forEach((row, index) => {
-      const rating = formatRating(row.rating);
-      if (rating !== previous) {
+      if (previous === null || !rankTied(row, previous)) {
         place = index + 1;
-        previous = rating;
+        previous = row;
       }
 
       const tr = document.createElement('tr');
@@ -46,7 +48,7 @@ export async function enterLeaderboard() {
 
       const ratingCell = document.createElement('td');
       ratingCell.className = 'ranks__rating';
-      ratingCell.textContent = rating;
+      ratingCell.textContent = formatRating(row.rating);
 
       tr.append(placeCell, nameCell, gamesCell, ratingCell);
       body.append(tr);

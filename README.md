@@ -270,13 +270,28 @@ of them. It is re-read on boot, on entering the lobby or the leaderboard, and
 a game ends. The leaderboard hands over the rows it has just fetched rather
 than sending for them again.
 
-The lead is decided on the *rounded* rating, which is what the place numbers
-beside it use: two players shown as 1013 are level as far as anyone reading
-the page can tell, and it would be odd for one to be gold over a difference
-nothing displays. So a tie at the top belongs to everyone in it. In a field of
-one, or a field where everyone is level, there is no lead to hold and nobody
-is coloured. The gold is never the only signal: the leaderboard prints the
-place beside the name, and everywhere else the rating itself is next to it.
+The ladder is read on the rating as it is *printed*, then on games played.
+Rounded rather than exact, because the exact figure is not on the page: being
+placed above somebody over a hundredth of a point displayed nowhere is not a
+placing anyone can check. That makes ties on the visible number common — with
+eight players starting level they are the normal case — so games played
+settles them. The same rating off more games is the better-established one.
+
+That is not the order the `leaderboard` view returns. The view sorts on the
+exact rating, so it will hand over 1003.4-off-5-games above 1003.2-off-20;
+the ladder wants the second of those first. `rankRows()` in `standing.js`
+re-sorts the rows before anything places or draws them, and `leaderboard.js`
+takes its place numbers from that order. One rule, `compareRank()`, decides
+both the placings and the gold, so the two can never disagree.
+
+Players the ladder genuinely cannot separate — same printed rating, same
+number of games behind it — still share a place and the gold with it. There
+is nothing left to tell them apart by that a reader could check, and picking
+one on a hidden decimal or on alphabetical order would be a coin toss wearing
+a suit. In a field of one, or one where every player is level on both counts,
+there is no lead to hold and nobody is coloured. The gold is never the only
+signal: the leaderboard prints the place beside the name, and everywhere else
+the rating itself is next to it.
 
 ## Names
 

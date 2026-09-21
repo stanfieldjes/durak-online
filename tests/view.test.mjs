@@ -44,6 +44,7 @@ let ratingChart;
 let ui;
 let cropBounds;
 let leaderboard;
+let standing;
 let db;
 let window;
 
@@ -91,6 +92,7 @@ before(async () => {
   ({ ratingChart } = await import(pathToFileURL(join(dir, 'chart.js')).href));
   ui = await import(pathToFileURL(join(dir, 'ui.js')).href);
   leaderboard = await import(pathToFileURL(join(dir, 'leaderboard.js')).href);
+  standing = await import(pathToFileURL(join(dir, 'standing.js')).href);
   db = await import(pathToFileURL(join(dir, 'db.js')).href);
 });
 
@@ -359,7 +361,7 @@ test('a name in another script keeps its first character whole', { skip: NO_DOM 
  * the body would detach it and break whatever ran next.
  */
 async function standings(rows) {
-  db.fake.rows = rows;
+  db.fake.rows = asView(rows);
   document.querySelector('#ranks-mount')?.remove();
   const mount = document.createElement('div');
   mount.id = 'ranks-mount';
@@ -381,6 +383,9 @@ const rank = (username, rating, over = {}) => ({
   id: username, username, rating, games: 10, duraks: 3, avatar_url: null, ...over,
 });
 
+/** The view hands rows over sorted on the exact rating; mimic that. */
+const asView = (rows) => [...rows].sort((a, b) => b.rating - a.rating || b.games - a.games);
+
 test('the name at the top of the leaderboard is the gold one', { skip: NO_DOM }, async () => {
   const rows = await standings([
     rank('Eli', 1090.2), rank('gia', 1025), rank('bo', 980.694517),
@@ -398,13 +403,57 @@ test('it follows the lead rather than staying put', { skip: NO_DOM }, async () =
   assert.deepEqual(after.map((r) => [r.name, r.gold]), [['gia', true], ['Eli', false]]);
 });
 
-test('a tie for first is gold for everyone in it', { skip: NO_DOM }, async () => {
-  // Equal ratings already share the place number, so they share the colour.
+test('two players showing the same rating are split by games played', { skip: NO_DOM }, async () => {
+  // Both print 1003. Only one name is gold, and it is the one with more
+  // games behind the number.
   const rows = await standings([
-    rank('Eli', 1012.4), rank('gia', 1012.2), rank('bo', 970),
+    rank('Eli', 1003.4, { games: 5 }),
+    rank('gia', 1003.2, { games: 20 }),
+    rank('bo', 970, { games: 12 }),
+  ]);
+  assert.deepEqual(rows.map((r) => [r.name, r.place, r.gold]), [
+    ['gia', '1', true],
+    ['Eli', '2', false],
+    ['bo', '3', false],
+  ]);
+});
+
+test('the tie-break outranks the exact rating, which nothing displays', { skip: NO_DOM }, () => {
+  // The leaderboard view hands rows over sorted on the exact rating, which
+  // would put the higher hundredth first however few games it came off. The
+  // ladder is read on the printed figure, so the order has to be redone.
+  const asTheViewSendsThem = [
+    rank('Eli', 1003.4, { games: 5 }),
+    rank('gia', 1003.2, { games: 20 }),
+  ];
+  assert.deepEqual(
+    standing.rankRows(asTheViewSendsThem).map((r) => r.username),
+    ['gia', 'Eli'],
+  );
+  // And it leaves the caller's array alone.
+  assert.deepEqual(asTheViewSendsThem.map((r) => r.username), ['Eli', 'gia']);
+});
+
+test('players level on both counts still share the place and the gold', { skip: NO_DOM }, async () => {
+  // Same printed rating off the same number of games: there is nothing left
+  // to separate them by that a reader could check, so neither is promoted.
+  const rows = await standings([
+    rank('Eli', 1012.4, { games: 9 }),
+    rank('gia', 1012.2, { games: 9 }),
+    rank('bo', 970, { games: 9 }),
   ]);
   assert.deepEqual(rows.map((r) => r.place), ['1', '1', '3']);
   assert.deepEqual(rows.map((r) => r.gold), [true, true, false]);
+});
+
+test('a lead on games alone still counts as a lead', { skip: NO_DOM }, async () => {
+  // Everyone on the same printed rating is not "everyone level" any more —
+  // games played separates them, so somebody is top.
+  const rows = await standings([
+    rank('Eli', 1000.1, { games: 4 }),
+    rank('gia', 1000.4, { games: 11 }),
+  ]);
+  assert.deepEqual(rows.map((r) => [r.name, r.gold]), [['gia', true], ['Eli', false]]);
 });
 
 test('an empty leaderboard says so and paints nobody', { skip: NO_DOM }, async () => {
