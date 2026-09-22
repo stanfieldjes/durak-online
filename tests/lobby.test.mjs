@@ -118,11 +118,11 @@ test('there is one list of tables, and nothing else lists them', { skip: NO_DOM 
   assert.equal(document.querySelector('#my-open-game'), null);
 });
 
-test('the list comes first, with no heading, and opening a table is underneath it', { skip: NO_DOM }, () => {
+test('the tables come first, under their heading, and opening a table is underneath them', { skip: NO_DOM }, () => {
   const panel = document.querySelector('.panel--lobby');
   const first = panel.firstElementChild;
   assert.ok(first.contains(document.querySelector('#open-games')), 'the tables are first on the page');
-  assert.equal(first.querySelector('h1, h2, h3'), null, 'no heading over the tables');
+  assert.equal(first.firstElementChild.textContent, 'Tables', 'the heading sits over the list');
   assert.equal(document.querySelector('#refresh-games'), null, 'no refresh button');
 
   const list = document.querySelector('#open-games');

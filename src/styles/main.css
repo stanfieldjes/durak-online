@@ -711,8 +711,8 @@ body {
 .panel--lobby { display: grid; gap: 2.5rem; }
 .lobby__buttons { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 
-/* The list of tables is the first thing on the page, with no heading over
-   it; opening a new one is the button underneath. */
+/* The list of tables is the first thing on the page; opening a new one is
+   the button underneath. */
 .lobby__tables > .lobby__buttons { margin-top: 0.9rem; }
 .lobby__tables > .empty { margin: 0; }
 
