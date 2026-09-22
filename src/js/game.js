@@ -59,6 +59,7 @@ import {
   attachProfileCard, hideProfileCard, markStanding,
 } from './ui.js';
 import { refreshStandings } from './standing.js';
+import { initChat, openChat, closeChat } from './chat.js';
 
 /**
  * How long a finished round stays on the table before it clears itself.
@@ -188,6 +189,8 @@ export function initGame() {
   // A card sound on release gives an immediate sense of the new level.
   slider.addEventListener('change', () => playSound('play'));
   paintVolume();
+
+  initChat();
 }
 
 export async function enterGame(gameId) {
@@ -241,6 +244,12 @@ export async function enterGame(gameId) {
 
   adopt(game.state);
   startWatching(gameId);
+
+  // The chat belongs to the seats. Someone watching has none, so it is never
+  // opened for them — and the database would give them nothing if it were.
+  if (!spectating && mySeat !== null) {
+    openChat(gameId, { lookup: (playerId) => profileOf(playerId) });
+  }
 
   document.addEventListener('visibilitychange', onWake);
   window.addEventListener('focus', onWake);
@@ -391,6 +400,7 @@ export function leaveGame() {
 function reset() {
   if (unwatch) unwatch();
   unwatch = null;
+  closeChat();
   watchGen++;
   closing = false;
   live = false;
@@ -437,6 +447,11 @@ function mergeRow(previous, row) {
 function seatOf(userId) {
   const found = (game?.players ?? []).find((p) => p.player_id === userId);
   return found ? found.seat : null;
+}
+
+/** A seated player's profile by their id, or null for anyone not at the table. */
+function profileOf(playerId) {
+  return (game?.players ?? []).find((p) => p.player_id === playerId)?.profile ?? null;
 }
 
 function profileAt(seat) {

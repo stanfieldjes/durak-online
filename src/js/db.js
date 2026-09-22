@@ -318,6 +318,43 @@ export async function getGameVersion(gameId) {
   return data;
 }
 
+/* ---------------- table chat ---------------- */
+
+/** Longest message, in characters. Mirrors game_messages_body_check. */
+export const CHAT_MAX_CHARS = 300;
+
+/** How much of a table's chat is kept on screen, and read on the way in. */
+export const CHAT_HISTORY = 100;
+
+const MESSAGE_COLUMNS = `id, game_id, player_id, body, created_at,
+  profile:profiles ( ${PROFILE_COLUMNS} )`;
+
+/**
+ * A table's chat, oldest first. With `afterId`, only what came after it — the
+ * catch-up read after a dropped connection.
+ *
+ * Only the players seated at the table get anything back; for anyone else the
+ * row-level security policy makes the chat look empty.
+ */
+export async function listMessages(gameId, { afterId = null, limit = CHAT_HISTORY } = {}) {
+  let query = supabase
+    .from('game_messages')
+    .select(MESSAGE_COLUMNS)
+    .eq('game_id', gameId);
+  if (afterId !== null) query = query.gt('id', afterId);
+  // Newest first so the limit keeps the latest lines, then turned round.
+  const { data, error } = await query.order('id', { ascending: false }).limit(limit);
+  if (error) throw error;
+  return (data ?? []).reverse();
+}
+
+/** Say something at a table you are sitting at. The database checks the rest. */
+export async function sendMessage(gameId, body) {
+  const { data, error } = await supabase.rpc('send_message', { p_game: gameId, p_body: body });
+  if (error) throw error;
+  return data;
+}
+
 /* ---------------- realtime ---------------- */
 
 /**
@@ -351,6 +388,23 @@ export function watchGame(gameId, onChange, onStatus) {
       'postgres_changes',
       { event: '*', schema: 'public', table: 'game_players', filter: `game_id=eq.${gameId}` },
       () => onChange({ kind: 'seats' })
+    )
+    .subscribe((status, err) => onStatus?.(status, err));
+  return () => supabase.removeChannel(channel);
+}
+
+/**
+ * Watch one table's chat. Realtime applies the same policy as a read, so a
+ * browser not seated at the table is sent nothing. Returns an unsubscribe
+ * function; `onStatus` hears every SUBSCRIBED so the caller can catch up.
+ */
+export function watchChat(gameId, onMessage, onStatus) {
+  const channel = supabase
+    .channel(channelName(`chat:${gameId}`))
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'game_messages', filter: `game_id=eq.${gameId}` },
+      (payload) => onMessage(payload.new)
     )
     .subscribe((status, err) => onStatus?.(status, err));
   return () => supabase.removeChannel(channel);

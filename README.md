@@ -55,11 +55,12 @@ npm run test:sql             # the schema, against a throwaway Postgres
 ```
 
 `build.py` needs nothing but Python 3.9+. The tests need Node 18+ and nothing
-else, with one exception: the parts of `tests/view.test.mjs` that need a
-document use jsdom, the one devDependency. Without `npm install` those skip
-themselves and the rest of the suite still runs. `test:sql` additionally needs
-a local `postgres` binary and is skipped in CI; everything it checks about the
-rating is also checked in `tests/sync.test.mjs`, which needs nothing.
+else, with one exception: the parts of `tests/view.test.mjs` and
+`tests/chat.test.mjs` that need a document use jsdom, the one devDependency.
+Without `npm install` those skip themselves and the rest of the suite still
+runs. `test:sql` additionally needs a local `postgres` binary and is skipped
+in CI; everything it checks about the rating is also checked in
+`tests/sync.test.mjs`, which needs nothing.
 
 **4. Deploy**
 
@@ -169,6 +170,42 @@ plays out exactly as it would unwatched.
 
 Watching means seeing the cards, so `schema.sql` lets any signed-in player
 read a running game's row. See "Trust model" for what that gives away.
+
+## Table chat
+
+Every table has a chat for the people sitting at it. It opens in the waiting
+room as soon as you sit down, stays with you across the felt while the game
+is played, and is still there over the result for a "good game" — for fifteen
+minutes after the last card, after which the table's chat is shut. It lives
+in a tab in the bottom-left corner that opens into a panel, so it never takes
+room from the felt; closed, the tab counts what was said since you last
+looked. Whether you keep it open is remembered from one table to the next.
+
+**Spectators can't use it.** They cannot read it and they cannot write to it,
+so the table can talk without the stands listening in and the stands cannot
+heckle. That is enforced by the database, not by the page hiding a box:
+
+- Messages are rows in `game_messages`, and its only select policy is
+  "seated at this table". Realtime applies the same policy to the stream, so a
+  spectator's browser is never sent a line at all.
+- The only way to write one is `send_message()`, which refuses anyone not
+  seated. There is no insert, update or delete policy on the table.
+
+A player who gets up from a waiting table loses sight of its chat with the
+seat; what they said stays for the people still sitting there. A closed
+table's chat is shut.
+
+A message is one line of up to 300 characters, counted as characters the way
+names are, so the limit means the same in Cyrillic, Japanese or emoji. The
+page counts the same way before sending — an input's own `maxlength` counts
+UTF-16 units and would cut an emoji-heavy line off at half. Nobody can send
+more than eight lines in ten seconds. What anyone types is always shown as
+text, never as markup.
+
+Keeping up works the way the table does (`src/js/chat.js`): realtime brings
+new lines, and every reconnect and every return to the tab reads whatever came
+after the last line read, since realtime does not replay what it missed.
+Lines are kept by id, so one that arrives both ways is shown once.
 
 ## Rating
 
@@ -421,8 +458,9 @@ front-end code, rotate it immediately.
 
 **What the database enforces.** Turn ownership of the opening card, seat
 membership, that the deal cannot change mid-game, that positions advance one
-version at a time, that you may only write a picture into your own folder, and
-— the important one — ratings. `finish_game()` computes every change itself, in
+version at a time, that you may only write a picture into your own folder,
+that only the players at a table can read or write its chat, and — the
+important one — ratings. `finish_game()` computes every change itself, in
 one transaction, from ratings it has just locked. A client never sends a rating
 or any part of one. You also cannot name someone else the durak unless the
 stored position agrees; naming yourself is always allowed, which is how
@@ -438,6 +476,11 @@ conceding works.
    watching, since spectating is exactly the ability to see those hands. That
    also means a player could open another running table's position in
    devtools and read the cards there.
+
+The second is also the one thing the table chat cannot fix. The chat keeps
+the stands out of the conversation, but a spectator can already see every
+hand, so it does not stop somebody watching a game from telling a player what
+their opponents hold by some other route.
 
 Finished games are readable by everyone, which is what the recent-games list on
 the lobby is built from. That gives nothing away: the game is over.
@@ -476,16 +519,18 @@ src/js/rating.js         rating model, mirrored by public.rating_changes()
 src/js/standing.js       who is top of the ladder, for the gold
 src/js/db.js             every Supabase call lives here
 src/js/game.js           table rendering, input, spectating, stale-write retry
+src/js/chat.js           the chat at a table, for the players seated at it
 src/js/account.js        your own name, picture and rating
 src/js/cropper.js        picking the square of a picture that becomes an avatar
 src/js/chart.js          the rating-over-time line
 src/js/{app,auth,lobby,leaderboard,ui}.js
-supabase/schema.sql      tables, RLS, RPCs, rating maths, avatars bucket
+supabase/schema.sql      tables, RLS, RPCs, rating maths, avatars bucket, chat
 tests/engine.test.mjs    playouts at 2, 3 and 4 players
 tests/sync.test.mjs      SQL contract, concurrency, rating behaviour
 tests/rating.test.mjs    the rating model on its own
 tests/markup.test.mjs    templates, stylesheet and scripts agree with each other
 tests/view.test.mjs      the crop square, the rating line, the hover panel
+tests/chat.test.mjs      the table chat: ordering, catching up, text not markup
 tests/build.test.mjs     every shipped module is cache-busted together
 tests/sql/               runs schema.sql against a throwaway Postgres, both on
                          an empty database and over the previous schema

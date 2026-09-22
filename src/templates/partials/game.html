@@ -71,4 +71,23 @@
       <button type="button" class="btn btn--primary" id="result-again">Back to the lobby</button>
     </div>
   </div>
+
+  <!-- For the players at this table only; chat.js explains who is kept out and how. -->
+  <aside class="chat" id="chat" aria-label="Table chat" hidden>
+    <button type="button" class="chat__toggle" id="chat-toggle"
+            aria-expanded="false" aria-controls="chat-body">
+      <span class="chat__title">Table chat</span>
+      <span class="chat__badge" id="chat-unread" aria-hidden="true" hidden></span>
+    </button>
+    <div class="chat__body" id="chat-body" hidden>
+      <p class="chat__empty" id="chat-empty">Only the players at this table can see this. Spectators can't.</p>
+      <ol class="chat__log" id="chat-log" role="log" aria-live="polite" aria-label="Messages"></ol>
+      <form class="chat__form" id="chat-form" autocomplete="off">
+        <input type="text" class="chat__input" id="chat-input" name="body"
+               placeholder="Say something to the table" aria-label="Message"
+               enterkeyhint="send" spellcheck="true">
+        <button type="submit" class="btn btn--primary chat__send" id="chat-send">Send</button>
+      </form>
+    </div>
+  </aside>
 </section>

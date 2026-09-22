@@ -62,7 +62,7 @@ begin
   -- look identical; the normalising index has to treat them as the same name.
   perform test_player(E'Caféx');
   perform ok('the same name in two Unicode forms collides',
-    raises(format('insert into public.profiles (id, username) values (%L, %L)', id, E'Caféx')));
+    raises(format('insert into public.profiles (id, username) values (%L, %L)', id, E'Caféx')));
 end
 $$;
 
@@ -342,6 +342,134 @@ begin
     (select qual from pg_policies
       where schemaname = 'public' and tablename = 'games' and cmd = 'SELECT')
     like '%abandoned%');
+end
+$$;
+
+\echo '== table chat =='
+
+-- Reading is decided by row-level security, which a superuser skips, so the
+-- reads below are made as the `authenticated` role a browser signs in as.
+-- The grants are the ones Supabase gives that role on public tables anyway.
+grant usage on schema auth, public to authenticated;
+grant select on public.game_messages, public.game_players to authenticated;
+
+/** How many of a table's messages `p_user` can see, reading as a browser would. */
+create or replace function test_chat_visible(p_user uuid, p_game uuid) returns int
+language plpgsql as $$
+declare n int;
+begin
+  perform test_become(p_user);
+  set local role authenticated;
+  select count(*) into n from public.game_messages where game_id = p_game;
+  reset role;
+  return n;
+end;
+$$;
+
+do $$
+declare
+  host  uuid := test_player('chat_host');
+  guest uuid := test_player('chat_guest');
+  fan   uuid := test_player('chat_fan');
+  g     uuid;
+  m     public.game_messages;
+  i     int;
+begin
+  perform test_become(host);
+  g := (public.create_game(8)).id;
+  perform test_become(guest);
+  perform public.join_game(g);
+
+  perform test_become(host);
+  m := public.send_message(g, '  привет, table  ');
+  perform ok('a seated player can talk while the table fills', m.id is not null);
+  perform ok('a message is trimmed', m.body = 'привет, table');
+  perform ok('a message is signed by whoever sent it', m.player_id = host);
+
+  perform test_become(guest);
+  perform public.send_message(g, 'hi');
+  perform ok('every seat can talk, not only the host',
+    (select count(*) from public.game_messages where game_id = g) = 2);
+
+  -- The stands.
+  perform test_become(fan);
+  perform ok('someone not seated cannot write to a table''s chat',
+    raises(format('select public.send_message(%L, %L)', g, 'boo')));
+  perform ok('someone not seated cannot read a table''s chat',
+    test_chat_visible(fan, g) = 0);
+  perform ok('a seated player reads the whole chat',
+    test_chat_visible(host, g) = 2);
+
+  perform test_become(null);
+  perform ok('an anonymous caller cannot write',
+    raises(format('select public.send_message(%L, %L)', g, 'hello')));
+
+  -- What a message may be.
+  perform test_become(host);
+  perform ok('an empty message is refused',
+    raises(format('select public.send_message(%L, %L)', g, '   ')));
+  perform ok('a message over 300 characters is refused',
+    raises(format('select public.send_message(%L, %L)', g, repeat('a', 301))));
+  perform ok('300 characters in any script are allowed, counted as characters',
+    (public.send_message(g, repeat('ж', 300))).id is not null);
+  perform ok('a message with a line break is refused',
+    raises(format('select public.send_message(%L, %L)', g, E'one\ntwo')));
+  perform ok('the table cannot be written to directly',
+    not exists (select 1 from pg_policies
+                 where schemaname = 'public' and tablename = 'game_messages'
+                   and cmd in ('INSERT', 'UPDATE', 'DELETE', 'ALL')));
+
+  -- A flood.
+  perform test_become(guest);
+  for i in 1..7 loop
+    perform public.send_message(g, 'spam ' || i);
+  end loop;
+  perform ok('an eighth message inside ten seconds goes through',
+    (select count(*) from public.game_messages where game_id = g and player_id = guest) = 8);
+  perform ok('a ninth inside ten seconds is refused',
+    raises(format('select public.send_message(%L, %L)', g, 'one more')));
+
+  -- Getting up from a waiting table takes the chat with the seat.
+  perform public.leave_table(g);
+  perform ok('a player who left can no longer read the chat', test_chat_visible(guest, g) = 0);
+  perform test_become(guest);
+  perform ok('or write to it',
+    raises(format('select public.send_message(%L, %L)', g, 'still here?')));
+  perform ok('what they said stays for the others',
+    test_chat_visible(host, g) = 10);
+
+  -- Closed and long-finished tables.
+  perform test_become(host);
+  perform public.abandon_game(g);
+  perform ok('a closed table''s chat is shut',
+    raises(format('select public.send_message(%L, %L)', g, 'bye')));
+
+  perform ok('the chat is published to realtime',
+    exists (select 1 from pg_publication_tables
+             where pubname = 'supabase_realtime' and tablename = 'game_messages'));
+end
+$$;
+
+do $$
+declare
+  a uuid := test_player('gg_one');
+  b uuid := test_player('gg_two');
+  g uuid;
+begin
+  perform test_become(a);
+  g := (public.create_game(2)).id;
+  insert into public.game_players (game_id, seat, player_id) values (g, 1, b);
+  update public.games set status = 'finished' where id = g;
+
+  perform test_become(b);
+  perform ok('a good game can be said just after it ends',
+    (public.send_message(g, 'gg')).id is not null);
+
+  alter table public.games disable trigger games_touch_updated_at;
+  update public.games set updated_at = now() - interval '1 hour' where id = g;
+  alter table public.games enable trigger games_touch_updated_at;
+  perform ok('an old game''s chat is shut',
+    raises(format('select public.send_message(%L, %L)', g, 'anyone?')));
 end
 $$;
 

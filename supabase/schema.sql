@@ -909,6 +909,114 @@ begin
 end;
 $$;
 
+-- ------------------------------------------------------------- table chat --
+--
+-- Every table has a chat of its own, for the people sitting at it: in the
+-- waiting room while it fills, across the felt while it is played, and for a
+-- few minutes after it ends. Spectators get none of it — they can neither
+-- read it nor write to it — so the table can talk without the stands
+-- listening, and the stands cannot heckle.
+--
+-- That is enforced here rather than by the page hiding a box. Reading is
+-- limited by the select policy below, and realtime applies the same policy to
+-- the stream, so a spectator's browser is never sent a message at all.
+-- Writing goes through send_message(), like every other write.
+--
+-- A player who gets up from a waiting table loses sight of its chat along
+-- with the seat; what they said stays for the people still sitting there.
+create table if not exists public.game_messages (
+  id         bigint generated always as identity primary key,
+  game_id    uuid not null references public.games(id) on delete cascade,
+  player_id  uuid not null references public.profiles(id) on delete cascade,
+  body       text not null,
+  created_at timestamptz not null default now(),
+  -- Counted in characters, like names, so the limit means the same in any
+  -- script. One line: the box is a single-line input, and a control
+  -- character has no business in a chat line.
+  constraint game_messages_body_check check (
+    char_length(body) between 1 and 300
+    and body = btrim(body)
+    and body !~ '[[:cntrl:]]'
+  )
+);
+
+create index if not exists game_messages_game_idx
+  on public.game_messages (game_id, id);
+
+alter table public.game_messages enable row level security;
+
+drop policy if exists "seated players read their table's chat" on public.game_messages;
+create policy "seated players read their table's chat"
+  on public.game_messages for select
+  using (
+    exists (
+      select 1 from public.game_players gp
+      where gp.game_id = game_messages.game_id and gp.player_id = auth.uid()
+    )
+  );
+
+-- Deliberately no insert, update or delete policy: send_message() is the one
+-- way in, and nothing edits or removes a line once it is said.
+
+create or replace function public.send_message(p_game uuid, p_body text)
+returns public.game_messages
+language plpgsql security definer set search_path = public
+as $$
+declare
+  me     uuid := auth.uid();
+  msg    text := btrim(coalesce(p_body, ''));
+  g      public.games;
+  recent int;
+  row    public.game_messages;
+begin
+  if me is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select * into g from games where id = p_game;
+  if not found then
+    raise exception 'no such game';
+  end if;
+  if not exists (
+    select 1 from game_players where game_id = p_game and player_id = me
+  ) then
+    raise exception 'only the players at this table can use its chat';
+  end if;
+  if g.status = 'abandoned' then
+    raise exception 'that table was closed';
+  end if;
+  -- Long enough after the last card for a "good game"; not a message board.
+  if g.status = 'finished' and g.updated_at < now() - interval '15 minutes' then
+    raise exception 'this game is over';
+  end if;
+
+  if char_length(msg) = 0 then
+    raise exception 'say something first';
+  end if;
+  if char_length(msg) > 300 then
+    raise exception 'a message can be at most 300 characters';
+  end if;
+  if msg ~ '[[:cntrl:]]' then
+    raise exception 'a message has to be one line of text';
+  end if;
+
+  -- Enough for a conversation, not enough to bury the table in a flood.
+  select count(*) into recent
+    from game_messages
+   where game_id = p_game and player_id = me
+     and created_at > now() - interval '10 seconds';
+  if recent >= 8 then
+    raise exception 'you are sending messages too quickly';
+  end if;
+
+  insert into game_messages (game_id, player_id, body)
+  values (p_game, me, msg)
+  returning * into row;
+
+  return row;
+end;
+$$;
+
 -- ----------------------------------------------------------------- grants --
 
 revoke all on function public.create_game(int)                    from public;
@@ -920,6 +1028,7 @@ revoke all on function public.abandon_game(uuid)                  from public;
 revoke all on function public.leave_table(uuid)                   from public;
 revoke all on function public.set_username(text)                  from public;
 revoke all on function public.set_avatar(text)                    from public;
+revoke all on function public.send_message(uuid, text)            from public;
 
 grant execute on function public.create_game(int)                 to authenticated;
 grant execute on function public.join_game(uuid, jsonb)           to authenticated;
@@ -930,6 +1039,7 @@ grant execute on function public.abandon_game(uuid)               to authenticat
 grant execute on function public.leave_table(uuid)                to authenticated;
 grant execute on function public.set_username(text)               to authenticated;
 grant execute on function public.set_avatar(text)                 to authenticated;
+grant execute on function public.send_message(uuid, text)         to authenticated;
 
 -- --------------------------------------------------------------- avatars --
 
@@ -995,8 +1105,9 @@ $$;
 
 -- --------------------------------------------------------------- realtime --
 
--- Lets the browser subscribe to tables and seats. RLS still applies to the
--- stream, so you only receive rows you are allowed to read.
+-- Lets the browser subscribe to tables, seats and table chat. RLS still
+-- applies to the stream, so you only receive rows you are allowed to read —
+-- which is what keeps a table's chat away from the people watching it.
 --
 -- Adding a table that is already published is an error, and the SQL editor
 -- runs this file as one transaction, so that error would roll back everything
@@ -1015,6 +1126,13 @@ begin
      where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'game_players'
   ) then
     alter publication supabase_realtime add table public.game_players;
+  end if;
+
+  if not exists (
+    select 1 from pg_publication_tables
+     where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'game_messages'
+  ) then
+    alter publication supabase_realtime add table public.game_messages;
   end if;
 end
 $$;
