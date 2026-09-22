@@ -5,7 +5,7 @@ import {
   leaveTable,
   listTables,
   listRecentGames,
-  listActiveGames,
+  listMyTables,
   watchLobby,
   RECENT_PER_PAGE,
 } from './db.js';
@@ -36,7 +36,6 @@ let recentTotal = 0;
 
 export function initLobby() {
   $('#create-game').addEventListener('click', onCreate);
-  $('#refresh-games').addEventListener('click', () => { refresh(); refreshRecent(); });
   $('#recent-prev').addEventListener('click', () => turnTo(recentPage - 1));
   $('#recent-next').addEventListener('click', () => turnTo(recentPage + 1));
 }
@@ -158,56 +157,142 @@ export async function refresh() {
   if (!session.user) return;
   const seq = ++refreshSeq;
   try {
-    const [tables, active] = await Promise.all([
+    const [tables, mine] = await Promise.all([
       listTables(),
-      listActiveGames(session.user.id),
+      listMyTables(session.user.id),
     ]);
     if (seq !== refreshSeq) return; // a newer refresh started while this one was out
-    renderActive(active);
-    renderTables(tables);
+    renderTables(mergeTables(mine, tables));
   } catch (error) {
     if (seq === refreshSeq) toast(readableError(error));
   }
 }
 
+const isSeated = (game) => (game.players ?? []).some((p) => p.player_id === session.user.id);
+
 /**
- * Games you are in that are still going, so leaving the page (or closing the
- * tab) never strands you: one click takes you back to the table.
+ * One list of every table worth looking at: those still filling up and those
+ * being played, yours and everybody else's.
+ *
+ * Your own come first, so the table you are at is never somewhere down the
+ * list, and they are read separately (listMyTables) so one of yours cannot
+ * fall off the end of it either. Each table appears once, whichever read it
+ * came from.
  */
-function renderActive(games) {
-  const list = $('#active-games');
+export function mergeTables(mine, all) {
+  const seen = new Set();
+  const once = (games) => games.filter((game) => {
+    if (!game || seen.has(game.id)) return false;
+    seen.add(game.id);
+    return true;
+  });
+  const yours = once([...mine, ...all.filter(isSeated)]);
+  const theirs = once(all);
+  return [...yours, ...theirs];
+}
+
+/**
+ * Every table is drawn the same way — who opened it, and one line on how it
+ * stands — whether you are sitting at it or not. The buttons are the only
+ * thing that tells your tables from anybody else's.
+ */
+function renderTables(games) {
+  const list = $('#open-games');
   clear(list);
-  show($('#active-section'), games.length > 0);
 
-  for (const game of games) {
-    const me = game.players?.find((p) => p.player_id === session.user.id);
-    const state = game.state;
-    const opponents = (game.players ?? [])
-      .filter((p) => p.player_id !== session.user.id)
-      .map((p) => p.profile?.username ?? 'unknown');
+  myTable = games.find((g) => g.status === 'waiting' && isSeated(g)) ?? null;
+  show($('#no-games'), games.length === 0);
 
-    const status = statusFor(state, me?.seat);
+  for (const game of games) list.append(tableRow(game));
+}
 
-    const li = document.createElement('li');
-    if (status.yourMove) li.classList.add('is-your-move');
+function tableRow(game) {
+  const players = game.players ?? [];
+  const playing = game.status === 'active';
+  const host = players.find((p) => p.player_id === game.host_id)?.profile ?? null;
+  const others = players
+    .filter((p) => p.player_id !== game.host_id)
+    .map((p) => p.profile?.username)
+    .filter(Boolean);
 
-    const name = document.createElement('span');
-    name.className = 'row__name';
-    name.textContent = `vs ${opponents.join(', ') || 'nobody'}`;
+  const li = document.createElement('li');
+  // A table being played is marked down the left edge, whoever it belongs to.
+  if (playing) li.classList.add('is-live');
 
-    const meta = document.createElement('span');
-    meta.className = 'row__meta';
-    meta.textContent = [status.text, `last move ${relativeTime(game.updated_at ?? game.created_at)}`].join(' · ');
+  const name = document.createElement('span');
+  name.className = 'row__name';
+  name.append(playerEl(host, { size: 'sm', fallback: 'Someone' }));
 
-    const link = document.createElement('a');
-    link.href = `#/game/${game.id}`;
-    link.dataset.link = '';
-    link.className = status.yourMove ? 'btn btn--primary' : 'btn';
-    link.textContent = 'Rejoin';
+  const meta = document.createElement('span');
+  meta.className = 'row__meta';
+  meta.textContent = [
+    host ? `rated ${formatRating(ratingOf(host))}` : null,
+    playing ? 'Playing now' : null,
+    playing ? stillIn(game) : `${players.length} of ${game.max_players} seated`,
+    others.length ? `with ${others.join(', ')}` : null,
+    playing
+      ? `last move ${relativeTime(game.updated_at ?? game.created_at)}`
+      : `opened ${relativeTime(game.created_at)}`,
+  ].filter(Boolean).join(' · ');
 
-    li.append(name, meta, link);
-    list.append(li);
+  const actions = document.createElement('span');
+  actions.className = 'row__actions';
+  actions.append(...buttonsFor(game));
+
+  li.append(name, meta, actions);
+  return li;
+}
+
+/** How many are playing, and how many of them are still holding cards. */
+function stillIn(game) {
+  const n = game.players?.length ?? 0;
+  const out = game.state?.out;
+  const left = Array.isArray(out) ? out.filter((isOut) => !isOut).length : n;
+  return left === n ? `${n} players` : `${left} of ${n} still in`;
+}
+
+/** The one part of a row that depends on whether it is your table. */
+function buttonsFor(game) {
+  const seated = isSeated(game);
+
+  if (game.status === 'waiting' && !seated) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn--primary';
+    const filling = (game.players?.length ?? 0) + 1 >= game.max_players;
+    btn.textContent = filling ? 'Take the last seat' : 'Sit down';
+    btn.addEventListener('click', () => onJoin(game, btn));
+    return [btn];
   }
+
+  if (game.status === 'waiting') {
+    const hosting = game.host_id === session.user.id;
+    const leave = document.createElement('button');
+    leave.type = 'button';
+    leave.className = 'btn btn--quiet';
+    leave.textContent = hosting ? 'Close the table' : 'Leave the table';
+    leave.addEventListener('click', () => onCloseMine(game, leave));
+    return [link(game, 'Go back to it'), leave];
+  }
+
+  if (!seated) return [link(game, 'Watch')];
+
+  // Yours and being played. When the table is waiting on you, the button says
+  // so and stands out; either way the details are in its tooltip.
+  const me = game.players.find((p) => p.player_id === session.user.id);
+  const status = statusFor(game.state, me?.seat);
+  const rejoin = link(game, status.yourMove ? 'Your move' : 'Rejoin', status.yourMove);
+  rejoin.title = status.text;
+  return [rejoin];
+}
+
+function link(game, text, primary = false) {
+  const a = document.createElement('a');
+  a.href = `#/game/${game.id}`;
+  a.dataset.link = '';
+  a.className = primary ? 'btn btn--primary' : 'btn';
+  a.textContent = text;
+  return a;
 }
 
 /** A short line on where you stand at a table, and whether it is waiting on you. */
@@ -221,129 +306,6 @@ function statusFor(state, seat) {
   }
   if (seat === state.attacker && state.table.length === 0) return { text: 'Your move: attack', yourMove: true };
   return { text: seat === state.attacker ? 'You are attacking' : 'You are throwing in', yourMove: false };
-}
-
-function seatedIds(game) {
-  return (game.players ?? []).map((p) => p.player_id);
-}
-
-/**
- * Every table worth looking at: those still filling up, which you can sit
- * down at, and those being played right now, which you can watch.
- *
- * Tables you are sitting at yourself are left out — an open one of those is
- * shown on its own above, and a running one under "Your games in progress" —
- * so no table appears twice.
- */
-function renderTables(games) {
-  const list = $('#open-games');
-  clear(list);
-
-  const seated = (game) => seatedIds(game).includes(session.user.id);
-  myTable = games.find((g) => g.status === 'waiting' && seated(g)) ?? null;
-  const others = games.filter((g) => !seated(g));
-
-  renderMyTable(myTable);
-  show($('#no-games'), others.length === 0);
-
-  for (const game of others) {
-    list.append(game.status === 'waiting' ? openTableRow(game) : liveTableRow(game));
-  }
-}
-
-/** A table still filling up: who is there, and a seat to take. */
-function openTableRow(game) {
-  const seated = game.players?.length ?? 0;
-  const host = game.players?.find((p) => p.player_id === game.host_id)?.profile;
-  const names = (game.players ?? [])
-    .filter((p) => p.player_id !== game.host_id)
-    .map((p) => p.profile?.username)
-    .filter(Boolean);
-
-  const li = document.createElement('li');
-
-  const name = document.createElement('span');
-  name.className = 'row__name';
-  name.append(playerEl(host, { size: 'sm', fallback: 'Someone' }));
-
-  const meta = document.createElement('span');
-  meta.className = 'row__meta';
-  meta.textContent = [
-    host ? `rated ${formatRating(ratingOf(host))}` : null,
-    `${seated} of ${game.max_players} seated`,
-    names.length ? `with ${names.join(', ')}` : null,
-    `opened ${relativeTime(game.created_at)}`,
-  ].filter(Boolean).join(' · ');
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'btn btn--primary';
-  btn.textContent = seated + 1 >= game.max_players ? 'Take the last seat' : 'Sit down';
-  btn.addEventListener('click', () => onJoin(game, btn));
-
-  li.append(name, meta, btn);
-  return li;
-}
-
-/** A table being played: who is at it, and a way in to watch. */
-function liveTableRow(game) {
-  const names = (game.players ?? []).map((p) => p.profile?.username ?? 'unknown');
-  const state = game.state;
-  const left = state ? state.out.filter((isOut) => !isOut).length : names.length;
-
-  const li = document.createElement('li');
-  li.classList.add('is-live');
-
-  const name = document.createElement('span');
-  name.className = 'row__name';
-  name.textContent = names.join(', ') || 'A game';
-
-  const meta = document.createElement('span');
-  meta.className = 'row__meta';
-  meta.textContent = [
-    'Playing now',
-    left === names.length ? `${names.length} players` : `${left} of ${names.length} still in`,
-    `last move ${relativeTime(game.updated_at ?? game.created_at)}`,
-  ].join(' · ');
-
-  const link = document.createElement('a');
-  link.href = `#/game/${game.id}`;
-  link.dataset.link = '';
-  link.className = 'btn';
-  link.textContent = 'Watch';
-
-  li.append(name, meta, link);
-  return li;
-}
-
-/** The table I am already sitting at: go back to it, or close / leave it from here. */
-function renderMyTable(game) {
-  const box = $('#my-open-game');
-  clear(box);
-  show(box, Boolean(game));
-  if (!game) return;
-
-  const hosting = game.host_id === session.user.id;
-  const seated = game.players?.length ?? 0;
-
-  const text = document.createElement('span');
-  text.textContent = hosting
-    ? `Your table is open (${seated} of ${game.max_players} seated).`
-    : `You are sitting at a table (${seated} of ${game.max_players} seated).`;
-
-  const link = document.createElement('a');
-  link.href = `#/game/${game.id}`;
-  link.dataset.link = '';
-  link.className = 'btn';
-  link.textContent = 'Go back to it';
-
-  const btn = document.createElement('button');
-  btn.type = 'button';
-  btn.className = 'btn btn--quiet';
-  btn.textContent = hosting ? 'Close the table' : 'Leave the table';
-  btn.addEventListener('click', () => onCloseMine(game, btn));
-
-  box.append(text, link, btn);
 }
 
 /* ------------------------------------------------------------------ */

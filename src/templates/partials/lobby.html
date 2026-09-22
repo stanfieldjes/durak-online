@@ -1,21 +1,10 @@
 <section class="panel panel--lobby" data-route="lobby" hidden>
-  <div class="lobby__active" id="active-section" hidden>
-    <h2 class="heading">In progress</h2>
-    <ul class="tables" id="active-games"></ul>
-  </div>
-
-  <div class="lobby__act">
+  <div class="lobby__tables">
+    <ul class="tables" id="open-games"></ul>
+    <p class="empty" id="no-games" hidden>No tables open right now.</p>
     <div class="lobby__buttons">
       <button type="button" class="btn btn--primary" id="create-game">Open a table</button>
-      <button type="button" class="btn" id="refresh-games">Refresh</button>
     </div>
-    <div class="hint my-table" id="my-open-game" hidden></div>
-  </div>
-
-  <div class="lobby__tables">
-    <h2 class="heading">Tables</h2>
-    <ul class="tables" id="open-games"></ul>
-    <p class="empty" id="no-games" hidden>None</p>
   </div>
 
   <div class="lobby__history">

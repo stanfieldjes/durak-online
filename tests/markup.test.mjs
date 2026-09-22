@@ -44,9 +44,6 @@ const UNSTYLED = new Map([
   ['panel--game', 'selected by .view:has() rather than styled directly'],
   ['history__delta', 'placement comes from .history .delta'],
   ['auth__pitch', 'a grid child of .panel--auth, which spaces it'],
-  ['lobby__active', 'a grid child of .panel--lobby, which spaces it'],
-  ['lobby__act', 'a grid child of .panel--lobby, which spaces it'],
-  ['lobby__tables', 'a grid child of .panel--lobby, which spaces it'],
   ['lobby__history', 'a grid child of .panel--lobby, which spaces it'],
 ]);
 

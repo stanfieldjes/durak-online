@@ -711,6 +711,11 @@ body {
 .panel--lobby { display: grid; gap: 2.5rem; }
 .lobby__buttons { display: flex; gap: 0.6rem; flex-wrap: wrap; }
 
+/* The list of tables is the first thing on the page, with no heading over
+   it; opening a new one is the button underneath. */
+.lobby__tables > .lobby__buttons { margin-top: 0.9rem; }
+.lobby__tables > .empty { margin: 0; }
+
 .tables, .history {
   list-style: none;
   margin: 0;
@@ -733,10 +738,16 @@ body {
   background: var(--rail-2);
 }
 
-.tables li > .btn { margin-left: auto; }
-
-/* A game in progress that is waiting on you. */
-.tables li.is-your-move { box-shadow: inset 3px 0 0 var(--green-bright); }
+/* The buttons sit together at the right-hand end of every row, one or two of
+   them, so a row of yours lines up with everybody else's. They are the only
+   part of a row that depends on whether the table is yours. */
+.row__actions {
+  margin-left: auto;
+  flex-shrink: 0;
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+}
 
 /* A table being played rather than filling up: marked in the table's own red,
    so the two kinds of row are told apart at a glance. */
@@ -747,16 +758,6 @@ body {
 
 .lobby__rule { margin: 0 0 1.1rem; }
 
-.my-table {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 0.5rem 0.8rem;
-  margin-top: 1rem;
-  max-width: none;
-}
-
-.my-table .btn { font-size: var(--step-0); }
 a.btn { display: inline-block; text-decoration: none; }
 
 /* ---------- recent games ---------- */
@@ -1878,8 +1879,9 @@ button.card.is-selected {
   .opponents--side { width: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .player__role { margin-left: 0; width: 100%; }
 
-  /* A game in the feed wraps rather than squeezing the names. */
-  .history li { flex-wrap: wrap; }
+  /* A game in the feed wraps rather than squeezing the names, and so does a
+     table, with its buttons dropping below. */
+  .history li, .tables li { flex-wrap: wrap; }
   .history__meta { width: 100%; margin-left: 0; }
   .history .delta { margin-left: auto; }
 

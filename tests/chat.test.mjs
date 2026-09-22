@@ -206,6 +206,25 @@ test('one player’s run of lines shares one name above it', { skip: NO_DOM }, a
   assert.ok(document.querySelectorAll('.chat__msg--mine').length === 0);
 });
 
+test('times follow the reader\'s locale, with no leading zero on the hour', { skip: NO_DOM }, async () => {
+  // 06:05 in UTC. Whether that reads "6:05 AM" or "6:05" is the reader's
+  // locale's business; "06:05" is nobody's.
+  const tz = process.env.TZ;
+  process.env.TZ = 'UTC';
+  try {
+    await enter([{ id: 1, game_id: 'g1', player_id: 'ann', body: 'early',
+                   created_at: '2026-09-22T06:05:00.000Z' }]);
+    const shown = $('#chat-log .chat__time').textContent;
+    assert.match(shown, /^6\D05(\s?[AaPp]\.?\s?[Mm]\.?)?$/, `unexpected time: ${shown}`);
+    assert.equal(shown, new Date('2026-09-22T06:05:00Z').toLocaleTimeString([], {
+      hour: 'numeric', minute: '2-digit', timeZone: 'UTC',
+    }), 'the 12- or 24-hour choice is the locale\'s');
+  } finally {
+    if (tz === undefined) delete process.env.TZ;
+    else process.env.TZ = tz;
+  }
+});
+
 test('someone who has left the table is still named, by looking them up', { skip: NO_DOM }, async () => {
   db.fake.profiles.gone = { id: 'gone', username: 'Ghost' };
   await enter([row(1, 'gone', 'bye all')]);

@@ -239,8 +239,13 @@ export async function listMyRatingHistory(userId, limit = 100) {
     .reverse();
 }
 
-/** Games this player is seated at that are still being played, latest move first. */
-export async function listActiveGames(userId, limit = 10) {
+/**
+ * Tables this player is seated at that are not over yet — filling up or being
+ * played — latest change first. Read separately from listTables() so a table
+ * of your own is never missing from the lobby just because thirty newer ones
+ * were opened since.
+ */
+export async function listMyTables(userId, limit = 10) {
   const ids = await mySeatGameIds(userId);
   if (ids.length === 0) return [];
 
@@ -248,7 +253,7 @@ export async function listActiveGames(userId, limit = 10) {
     .from('games')
     .select(GAME_COLUMNS)
     .in('id', ids)
-    .eq('status', 'active')
+    .in('status', ['waiting', 'active'])
     .order('updated_at', { ascending: false })
     .limit(limit);
   if (error) throw error;

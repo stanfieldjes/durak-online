@@ -284,7 +284,9 @@ function messageEl(message, previous) {
 function clockTime(iso) {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return '';
-  return at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  // The reader's own locale decides 12- or 24-hour (4:45 PM, or 16:45). The
+  // hour is never padded: 4:45, not 04:45.
+  return at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
 function paintOpen() {
