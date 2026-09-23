@@ -1,8 +1,6 @@
 <section class="panel panel--game" data-route="game" hidden>
 
   <div class="waiting" id="waiting" hidden>
-    <h1 class="display">Waiting for players</h1>
-    <p class="lede" id="waiting-count"></p>
     <div class="waiting__row">
       <ol class="seat-list" id="seat-list"></ol>
       <div class="deck-preview" id="deck-preview">
@@ -80,7 +78,6 @@
       <span class="chat__badge" id="chat-unread" aria-hidden="true" hidden></span>
     </button>
     <div class="chat__body" id="chat-body" hidden>
-      <p class="chat__empty" id="chat-empty">Only the players at this table can see this. Spectators can't.</p>
       <ol class="chat__log" id="chat-log" role="log" aria-live="polite" aria-label="Messages"></ol>
       <form class="chat__form" id="chat-form" autocomplete="off">
         <input type="text" class="chat__input" id="chat-input" name="body"
