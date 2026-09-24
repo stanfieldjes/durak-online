@@ -320,15 +320,15 @@ test('the text beside the picture stays within three lines', { skip: NO_DOM }, (
   assert.ok(body.children.length <= 3, `${body.children.length} lines beside the picture`);
 });
 
-test('under the rating are the last five results, newest on the left', { skip: NO_DOM }, async () => {
+test('under the rating are the last five results, newest on the right', { skip: NO_DOM }, async () => {
   // As the database hands them over: newest first, and more than five.
   db.fake.form['f-five'] = ['out', 'durak', 'draw', 'out', 'out', 'durak', 'durak'];
   const card = await openCard(player({ id: 'f-five' }));
 
-  assert.deepEqual(circles(card), ['out', 'durak', 'draw', 'out', 'out']);
+  assert.deepEqual(circles(card), ['out', 'out', 'draw', 'durak', 'out']);
   assert.equal(
     card.querySelector('.pcard__form').getAttribute('aria-label'),
-    'Last 5 games, newest first: got out, durak, draw, got out, got out',
+    'Last 5 games, oldest first: got out, got out, draw, durak, got out',
   );
   // A tick, a dash or a cross in every one of them.
   for (const dot of card.querySelectorAll('.pcard__form .form-dot')) {
@@ -346,9 +346,10 @@ test('games played are no longer on the panel, and neither is the word durak', {
 });
 
 test('there are always five circles: games not played yet are empty rings', { skip: NO_DOM }, async () => {
+  // Newest first from the database: the draw is the latest game.
   db.fake.form['f-two'] = ['draw', 'out'];
   assert.deepEqual(circles(await openCard(player({ id: 'f-two' }))),
-    ['draw', 'out', 'empty', 'empty', 'empty']);
+    ['empty', 'empty', 'empty', 'out', 'draw']);
 
   ui.hideProfileCard();
   const card = await openCard(player({ id: 'f-none' }));
@@ -357,7 +358,7 @@ test('there are always five circles: games not played yet are empty rings', { sk
   assert.equal(card.querySelector('.pcard__form').textContent, '', 'rings, not words');
 });
 
-test('a newcomer\'s rings fill in from the left as they play', { skip: NO_DOM }, async () => {
+test('a newcomer\'s rings fill in from the right as they play', { skip: NO_DOM }, async () => {
   const seen = [];
   for (const played of [[], ['out'], ['durak', 'out'], ['draw', 'durak', 'out']]) {
     db.fake.form['f-new'] = played;
@@ -367,9 +368,9 @@ test('a newcomer\'s rings fill in from the left as they play', { skip: NO_DOM },
   }
   assert.deepEqual(seen, [
     'empty empty empty empty empty',
-    'out empty empty empty empty',
-    'durak out empty empty empty',
-    'draw durak out empty empty',
+    'empty empty empty empty out',
+    'empty empty empty out durak',
+    'empty empty out durak draw',
   ]);
 });
 
@@ -383,7 +384,7 @@ test('empty rings hold the row until the results arrive', { skip: NO_DOM }, asyn
 
   release();
   await flush();
-  assert.deepEqual(circles(card), ['out', 'empty', 'empty', 'empty', 'empty']);
+  assert.deepEqual(circles(card), ['empty', 'empty', 'empty', 'empty', 'out']);
 });
 
 test('results that arrive late are not drawn into somebody else’s panel', { skip: NO_DOM }, async () => {
@@ -398,7 +399,7 @@ test('results that arrive late are not drawn into somebody else’s panel', { sk
   await flush();
 
   assert.equal(card.querySelector('.pcard__name').textContent, 'gia');
-  assert.deepEqual(circles(card), ['out', 'empty', 'empty', 'empty', 'empty']);
+  assert.deepEqual(circles(card), ['empty', 'empty', 'empty', 'empty', 'out']);
 });
 
 test('one read per player, until a game ends', { skip: NO_DOM }, async () => {
@@ -415,7 +416,7 @@ test('one read per player, until a game ends', { skip: NO_DOM }, async () => {
   ui.hideProfileCard();
   const card = await openCard(player({ id: 'f-once' }));
   assert.equal(reads(), 2, 'a finished game makes it read again');
-  assert.deepEqual(circles(card), ['durak', 'out', 'empty', 'empty', 'empty']);
+  assert.deepEqual(circles(card), ['empty', 'empty', 'empty', 'out', 'durak']);
 });
 
 test('a player with no id gets the panel without the row', { skip: NO_DOM }, async () => {

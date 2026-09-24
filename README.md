@@ -398,8 +398,16 @@ never appears at the table. The letter is taken by character rather than by
 code unit, since slicing a string at index 1 cuts an emoji in half.
 
 Resting the pointer on a player — at the table, in the lobby, or on the
-leaderboard — opens a panel with a larger picture, their name and their
-rating. There is one panel for the whole site, refilled and moved rather than
+leaderboard — opens a panel with a larger picture, their name, their rating,
+and how their last five games went: five circles read left to right like a
+football form guide, newest on the right — green with a tick for a game they
+got out of, grey with a dash for a draw, red with a cross for one they were
+the durak in, and an empty ring for a game not played yet. A newcomer's row
+is five empty rings that fill in from the right as they play. Nothing on a profile says this, so it is read the first time someone's
+panel opens (`src/js/form.js`), drawn as empty rings until it arrives, and
+kept for thirty seconds so running
+the pointer over the same few names is one read per player; a game ending
+clears it, since that is when everyone's form changes. There is one panel for the whole site, refilled and moved rather than
 built per player: the table re-renders on every move, so a panel per seat
 would mean building dozens that are almost never looked at. It is placed in
 viewport coordinates on `<body>`, which keeps it clear of the felt's own
@@ -517,6 +525,7 @@ src/js/sound.js          sound effects, pooled and mutable
 src/audio/               the clips themselves
 src/js/rating.js         rating model, mirrored by public.rating_changes()
 src/js/standing.js       who is top of the ladder, for the gold
+src/js/form.js           a player's last five results, for the hover panel
 src/js/db.js             every Supabase call lives here
 src/js/game.js           table rendering, input, spectating, stale-write retry
 src/js/chat.js           the chat at a table, for the players seated at it
@@ -529,7 +538,7 @@ tests/engine.test.mjs    playouts at 2, 3 and 4 players
 tests/sync.test.mjs      SQL contract, concurrency, rating behaviour
 tests/rating.test.mjs    the rating model on its own
 tests/markup.test.mjs    templates, stylesheet and scripts agree with each other
-tests/view.test.mjs      the crop square, the rating line, the hover panel
+tests/view.test.mjs      the crop square, the rating line, the hover panel and its form
 tests/chat.test.mjs      the table chat: ordering, catching up, text not markup
 tests/build.test.mjs     every shipped module is cache-busted together
 tests/sql/               runs schema.sql against a throwaway Postgres, both on

@@ -288,10 +288,11 @@ body {
 }
 
 /*
-  How their last five games went, newest on the left: a green circle with a
-  tick for a game got out of, grey with a dash for a draw, red with a cross
-  for one they were the durak in. Always five: a game not played yet is an
-  empty ring, so a newcomer's row fills in from the left as they play. The
+  How their last five games went, newest on the right as in a football form
+  guide: a green circle with a tick for a game got out of, grey with a dash
+  for a draw, red with a cross for one they were the durak in. Always five: a
+  game not played yet is an empty ring, so a newcomer's row fills in from the
+  right as they play. The
   rings are also what shows while the results are on their way, so the panel
   is its final size from the moment it opens.
 

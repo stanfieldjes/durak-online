@@ -203,13 +203,18 @@ function formDot(result) {
 }
 
 /**
- * Always FORM_GAMES circles: the newest game on the left, then the ones
- * before it, and an empty ring for every game not yet played. A newcomer's
- * row is five empty rings that fill in from the left as they play.
+ * Always FORM_GAMES circles, read left to right like a timeline the way a
+ * football form guide is: the newest game on the right, the ones before it
+ * to its left, and an empty ring for every game not yet played. A newcomer's
+ * row is five empty rings that fill in from the right as they play.
+ *
+ * `newestFirst` is the order they come from the database in.
  */
-function drawForm(row, results) {
+function drawForm(row, newestFirst) {
   clear(row);
-  for (let i = 0; i < FORM_GAMES; i++) row.append(formDot(results[i] ?? 'empty'));
+  const oldestFirst = newestFirst.slice(0, FORM_GAMES).reverse();
+  for (let i = oldestFirst.length; i < FORM_GAMES; i++) row.append(formDot('empty'));
+  for (const result of oldestFirst) row.append(formDot(result));
 }
 
 /**
@@ -217,16 +222,17 @@ function drawForm(row, results) {
  * moved on to somebody else in the meantime — the row it was asked to fill is
  * no longer on the page.
  */
-function paintForm(row, results) {
+function paintForm(row, newestFirst) {
   if (!row.isConnected) return;
-  const shown = results.slice(0, FORM_GAMES);
-  drawForm(row, shown);
+  drawForm(row, newestFirst);
 
+  const shown = newestFirst.slice(0, FORM_GAMES).reverse();
   if (shown.length === 0) {
     row.setAttribute('aria-label', 'No finished games yet');
     return;
   }
-  const count = shown.length === 1 ? 'Last game' : `Last ${shown.length} games, newest first`;
+  // Read out in the order they are drawn: oldest first, latest last.
+  const count = shown.length === 1 ? 'Last game' : `Last ${shown.length} games, oldest first`;
   row.setAttribute('aria-label', `${count}: ${shown.map((r) => FORM_WORDS[r] ?? r).join(', ')}`);
 }
 
