@@ -1,6 +1,7 @@
 import { SUIT_GLYPH, SUIT_NAME } from './durak.js';
 import { formatRating, formatRatingDelta } from './rating.js';
 import { isTop } from './standing.js';
+import { recentForm, FORM_GAMES } from './form.js';
 
 export const $ = (sel, root = document) => root.querySelector(sel);
 export const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -116,8 +117,9 @@ export function playerEl(profile, { size = 'sm', fallback = 'unknown', card = tr
 /* ---------------- the card that follows the pointer ---------------- */
 
 /**
- * Who is that? A panel with a bigger picture, the name and the rating, shown
- * while the pointer rests on a player anywhere on the site.
+ * Who is that? A panel with a bigger picture, the name, the rating and how
+ * their last five games went, shown while the pointer rests on a player
+ * anywhere on the site.
  *
  * There is one panel, moved around and refilled, rather than one per player:
  * the table re-renders on every move and the leaderboard is a list, so a panel
@@ -161,12 +163,71 @@ function profileCard() {
   return cardEl_;
 }
 
-/** Games played, from either shape of row the site has. */
-function gamesOf(profile) {
-  return profile?.games ?? (
-    profile?.wins === undefined ? null
-      : (profile.wins ?? 0) + (profile.losses ?? 0) + (profile.draws ?? 0)
-  );
+/* ---- form: the last few results, as a row of circles ---- */
+
+const SVG = 'http://www.w3.org/2000/svg';
+
+/** What each circle carries: a tick, a dash, or a cross. */
+const FORM_MARKS = {
+  out: 'M4.6 8.3 L7 10.6 L11.4 5.6',
+  draw: 'M4.8 8 L11.2 8',
+  durak: 'M5.4 5.4 L10.6 10.6 M10.6 5.4 L5.4 10.6',
+};
+
+const FORM_WORDS = { out: 'got out', draw: 'draw', durak: 'durak' };
+
+/**
+ * One result as a circle: green with a tick for a game got out of, grey with
+ * a dash for a draw, red with a cross for one lost. `empty` is a ring with
+ * nothing in it: a game not played yet, or not known yet while the results
+ * are on their way.
+ */
+function formDot(result) {
+  const svg = document.createElementNS(SVG, 'svg');
+  svg.setAttribute('class', `form-dot form-dot--${result}`);
+  svg.setAttribute('viewBox', '0 0 16 16');
+  svg.setAttribute('aria-hidden', 'true');
+
+  const circle = document.createElementNS(SVG, 'circle');
+  circle.setAttribute('cx', '8');
+  circle.setAttribute('cy', '8');
+  circle.setAttribute('r', '7.25');
+  svg.append(circle);
+
+  if (FORM_MARKS[result]) {
+    const mark = document.createElementNS(SVG, 'path');
+    mark.setAttribute('d', FORM_MARKS[result]);
+    svg.append(mark);
+  }
+  return svg;
+}
+
+/**
+ * Always FORM_GAMES circles: the newest game on the left, then the ones
+ * before it, and an empty ring for every game not yet played. A newcomer's
+ * row is five empty rings that fill in from the left as they play.
+ */
+function drawForm(row, results) {
+  clear(row);
+  for (let i = 0; i < FORM_GAMES; i++) row.append(formDot(results[i] ?? 'empty'));
+}
+
+/**
+ * Fill the row once the results have come back. Does nothing if the panel has
+ * moved on to somebody else in the meantime — the row it was asked to fill is
+ * no longer on the page.
+ */
+function paintForm(row, results) {
+  if (!row.isConnected) return;
+  const shown = results.slice(0, FORM_GAMES);
+  drawForm(row, shown);
+
+  if (shown.length === 0) {
+    row.setAttribute('aria-label', 'No finished games yet');
+    return;
+  }
+  const count = shown.length === 1 ? 'Last game' : `Last ${shown.length} games, newest first`;
+  row.setAttribute('aria-label', `${count}: ${shown.map((r) => FORM_WORDS[r] ?? r).join(', ')}`);
 }
 
 function fillProfileCard(profile) {
@@ -192,12 +253,18 @@ function fillProfileCard(profile) {
 
   body.append(name, rating);
 
-  const games = gamesOf(profile);
-  if (games !== null && games !== undefined) {
-    const record = document.createElement('span');
-    record.className = 'pcard__record';
-    record.textContent = `${games} ${games === 1 ? 'game' : 'games'}`;
-    body.append(record);
+  // The last few games, as circles. Read on demand (form.js), so the row is
+  // drawn as empty rings first and filled when the answer arrives. If it
+  // cannot be read, the rings simply stay empty.
+  if (profile?.id) {
+    const form = document.createElement('span');
+    form.className = 'pcard__form';
+    form.setAttribute('role', 'img');
+    form.setAttribute('aria-label', 'Recent games');
+    drawForm(form, []);
+    body.append(form);
+
+    recentForm(profile.id).then((results) => paintForm(form, results), () => {});
   }
 
   el.append(body);

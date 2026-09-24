@@ -240,6 +240,31 @@ export async function listMyRatingHistory(userId, limit = 100) {
 }
 
 /**
+ * How this player's last few finished games went, newest first: 'out' for a
+ * game they got out of, 'durak' for one they were left holding the cards in
+ * (conceding included), 'draw' for one nobody lost. What the hover panel
+ * draws as its row of circles; see form.js.
+ */
+export async function listRecentResults(userId, limit = 5) {
+  const ids = await mySeatGameIds(userId);
+  if (ids.length === 0) return [];
+
+  const { data, error } = await supabase
+    .from('games')
+    .select('id, durak_id, updated_at')
+    .in('id', ids)
+    .eq('status', 'finished')
+    .order('updated_at', { ascending: false })
+    .limit(limit);
+  if (error) throw error;
+
+  return (data ?? []).map((game) => {
+    if (!game.durak_id) return 'draw';
+    return game.durak_id === userId ? 'durak' : 'out';
+  });
+}
+
+/**
  * Tables this player is seated at that are not over yet — filling up or being
  * played — latest change first. Read separately from listTables() so a table
  * of your own is never missing from the lobby just because thirty newer ones

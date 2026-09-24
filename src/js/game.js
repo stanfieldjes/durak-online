@@ -60,6 +60,7 @@ import {
 } from './ui.js';
 import { refreshStandings } from './standing.js';
 import { initChat, openChat, closeChat } from './chat.js';
+import { forgetForm } from './form.js';
 
 /**
  * How long a finished round stays on the table before it clears itself.
@@ -1646,6 +1647,8 @@ async function showResult() {
   // before the names are built, so they are written in the right colour
   // rather than repainted afterwards.
   await refreshStandings({ force: true });
+  // Everybody at this table has a new last game; the hover panel should say so.
+  forgetForm();
 
   const deltas = game.rating_delta ?? {};
   const mine = deltas[session.user.id];

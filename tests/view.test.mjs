@@ -45,6 +45,7 @@ let ui;
 let cropBounds;
 let leaderboard;
 let standing;
+let form;
 let db;
 let window;
 
@@ -79,10 +80,19 @@ before(async () => {
   writeFileSync(join(dir, 'supabase.js'),
     'export const supabase = {};\nexport const readableError = (e) => String(e?.message ?? e);\n');
   // Enough of the data layer and the session for leaderboard.js, whose own
-  // work — the placings, and who is top — is what is being checked.
+  // work — the placings, and who is top — is what is being checked, and for
+  // the hover panel's row of recent results. `form` holds each player's
+  // results newest first, as the database hands them over; `reads` records
+  // every time somebody's were asked for; a promise in `waits` holds a
+  // player's answer back until the test lets it go.
   writeFileSync(join(dir, 'db.js'),
-    'export const fake = { rows: [] };\n'
-    + 'export async function getLeaderboard() { return fake.rows; }\n');
+    'export const fake = { rows: [], form: {}, reads: [], waits: {} };\n'
+    + 'export async function getLeaderboard() { return fake.rows; }\n'
+    + 'export async function listRecentResults(id, limit) {\n'
+    + '  fake.reads.push(id);\n'
+    + '  if (fake.waits[id]) await fake.waits[id];\n'
+    + '  return (fake.form[id] ?? []).slice(0, limit);\n'
+    + '}\n');
   writeFileSync(join(dir, 'auth.js'),
     'export const session = { user: null, profile: null };\n'
     + 'export function renderWhoami() {}\nexport function nameProblem() { return null; }\n');
@@ -93,6 +103,7 @@ before(async () => {
   ui = await import(pathToFileURL(join(dir, 'ui.js')).href);
   leaderboard = await import(pathToFileURL(join(dir, 'leaderboard.js')).href);
   standing = await import(pathToFileURL(join(dir, 'standing.js')).href);
+  form = await import(pathToFileURL(join(dir, 'form.js')).href);
   db = await import(pathToFileURL(join(dir, 'db.js')).href);
 });
 
@@ -264,6 +275,22 @@ const player = (over = {}) => ({
   id: 'p1', username: 'Дурак', rating: 1013.375479, wins: 6, losses: 3, draws: 1, ...over,
 });
 
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+/** Open the panel for `profile` from a new trigger, and let any read land. */
+async function openCard(profile) {
+  const trigger = document.createElement('span');
+  document.body.append(trigger);
+  ui.attachProfileCard(trigger, profile);
+  trigger.dispatchEvent(new window.FocusEvent('focus'));
+  await flush();
+  return document.querySelector('.pcard');
+}
+
+/** What each circle in the panel's form row is, left to right. */
+const circles = (card) => [...card.querySelectorAll('.pcard__form .form-dot')]
+  .map((dot) => dot.getAttribute('class').replace('form-dot form-dot--', ''));
+
 test('it carries the name and the rating, rounded the way everything else is', { skip: NO_DOM }, () => {
   const trigger = document.createElement('span');
   document.body.append(trigger);
@@ -293,24 +320,107 @@ test('the text beside the picture stays within three lines', { skip: NO_DOM }, (
   assert.ok(body.children.length <= 3, `${body.children.length} lines beside the picture`);
 });
 
-test('it counts games from either shape of row, and says nothing else', { skip: NO_DOM }, () => {
-  const fromProfile = document.createElement('span');
-  document.body.append(fromProfile);
-  ui.attachProfileCard(fromProfile, player());   // wins 6, losses 3, draws 1
-  fromProfile.dispatchEvent(new window.FocusEvent('focus'));
-  assert.equal(document.querySelector('.pcard__record').textContent, '10 games');
+test('under the rating are the last five results, newest on the left', { skip: NO_DOM }, async () => {
+  // As the database hands them over: newest first, and more than five.
+  db.fake.form['f-five'] = ['out', 'durak', 'draw', 'out', 'out', 'durak', 'durak'];
+  const card = await openCard(player({ id: 'f-five' }));
+
+  assert.deepEqual(circles(card), ['out', 'durak', 'draw', 'out', 'out']);
+  assert.equal(
+    card.querySelector('.pcard__form').getAttribute('aria-label'),
+    'Last 5 games, newest first: got out, durak, draw, got out, got out',
+  );
+  // A tick, a dash or a cross in every one of them.
+  for (const dot of card.querySelectorAll('.pcard__form .form-dot')) {
+    assert.ok(dot.querySelector('circle') && dot.querySelector('path'));
+  }
+});
+
+test('games played are no longer on the panel, and neither is the word durak', { skip: NO_DOM }, async () => {
+  db.fake.form['f-quiet'] = ['durak', 'durak'];
+  const card = await openCard({ id: 'f-quiet', username: 'bo', rating: 988, games: 4, duraks: 1 });
+  assert.equal(card.querySelector('.pcard__record'), null);
+  assert.doesNotMatch(card.textContent, /\bgames?\b/i);
+  // How often somebody has been the fool is shown, not captioned.
+  assert.doesNotMatch(card.textContent, /durak/i);
+});
+
+test('there are always five circles: games not played yet are empty rings', { skip: NO_DOM }, async () => {
+  db.fake.form['f-two'] = ['draw', 'out'];
+  assert.deepEqual(circles(await openCard(player({ id: 'f-two' }))),
+    ['draw', 'out', 'empty', 'empty', 'empty']);
 
   ui.hideProfileCard();
+  const card = await openCard(player({ id: 'f-none' }));
+  assert.deepEqual(circles(card), ['empty', 'empty', 'empty', 'empty', 'empty']);
+  assert.equal(card.querySelector('.pcard__form').getAttribute('aria-label'), 'No finished games yet');
+  assert.equal(card.querySelector('.pcard__form').textContent, '', 'rings, not words');
+});
 
-  const fromLeaderboard = document.createElement('span');
-  document.body.append(fromLeaderboard);
-  ui.attachProfileCard(fromLeaderboard, { username: 'bo', rating: 988, games: 4, duraks: 1 });
-  fromLeaderboard.dispatchEvent(new window.FocusEvent('focus'));
+test('a newcomer\'s rings fill in from the left as they play', { skip: NO_DOM }, async () => {
+  const seen = [];
+  for (const played of [[], ['out'], ['durak', 'out'], ['draw', 'durak', 'out']]) {
+    db.fake.form['f-new'] = played;
+    form.forgetForm();                    // what a game ending does
+    ui.hideProfileCard();
+    seen.push(circles(await openCard(player({ id: 'f-new' }))).join(' '));
+  }
+  assert.deepEqual(seen, [
+    'empty empty empty empty empty',
+    'out empty empty empty empty',
+    'durak out empty empty empty',
+    'draw durak out empty empty',
+  ]);
+});
 
-  const card = document.querySelector('.pcard');
-  assert.equal(card.querySelector('.pcard__record').textContent, '4 games');
-  // How often somebody has been the fool is their business, not a caption.
-  assert.doesNotMatch(card.textContent, /durak/i);
+test('empty rings hold the row until the results arrive', { skip: NO_DOM }, async () => {
+  let release;
+  db.fake.waits['f-slow'] = new Promise((resolve) => { release = resolve; });
+  db.fake.form['f-slow'] = ['out'];
+
+  const card = await openCard(player({ id: 'f-slow' }));
+  assert.deepEqual(circles(card), ['empty', 'empty', 'empty', 'empty', 'empty']);
+
+  release();
+  await flush();
+  assert.deepEqual(circles(card), ['out', 'empty', 'empty', 'empty', 'empty']);
+});
+
+test('results that arrive late are not drawn into somebody else’s panel', { skip: NO_DOM }, async () => {
+  let release;
+  db.fake.waits['f-late'] = new Promise((resolve) => { release = resolve; });
+  db.fake.form['f-late'] = ['durak', 'durak', 'durak'];
+  db.fake.form['f-next'] = ['out'];
+
+  await openCard(player({ id: 'f-late' }));
+  const card = await openCard(player({ id: 'f-next', username: 'gia' }));
+  release();
+  await flush();
+
+  assert.equal(card.querySelector('.pcard__name').textContent, 'gia');
+  assert.deepEqual(circles(card), ['out', 'empty', 'empty', 'empty', 'empty']);
+});
+
+test('one read per player, until a game ends', { skip: NO_DOM }, async () => {
+  db.fake.form['f-once'] = ['out'];
+  const reads = () => db.fake.reads.filter((id) => id === 'f-once').length;
+
+  await openCard(player({ id: 'f-once' }));
+  ui.hideProfileCard();
+  await openCard(player({ id: 'f-once' }));
+  assert.equal(reads(), 1, 'hovering again is not another read');
+
+  db.fake.form['f-once'] = ['durak', 'out'];
+  form.forgetForm();
+  ui.hideProfileCard();
+  const card = await openCard(player({ id: 'f-once' }));
+  assert.equal(reads(), 2, 'a finished game makes it read again');
+  assert.deepEqual(circles(card), ['durak', 'out', 'empty', 'empty', 'empty']);
+});
+
+test('a player with no id gets the panel without the row', { skip: NO_DOM }, async () => {
+  const card = await openCard({ username: 'nobody', rating: 1000 });
+  assert.equal(card.querySelector('.pcard__form'), null);
 });
 
 test('an empty seat gets no panel at all', { skip: NO_DOM }, () => {

@@ -89,6 +89,7 @@ before(async () => {
     }
     export async function getProfile(id) { return fake.profiles[id] ?? null; }
     export async function getLeaderboard() { return []; }
+    export async function listRecentResults() { return []; }
   `);
 
   chat = await import(pathToFileURL(join(dir, 'chat.js')).href);

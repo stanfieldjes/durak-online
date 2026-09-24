@@ -66,6 +66,7 @@ before(async () => {
     export async function listMyTables() { return fake.mine; }
     export async function listRecentGames() { return { games: [], total: 0 }; }
     export async function getLeaderboard() { return []; }
+    export async function listRecentResults() { return []; }
     export async function createGame() {}
     export async function joinGame() {}
     export async function abandonGame() {}

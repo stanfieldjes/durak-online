@@ -287,11 +287,39 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-.pcard__record {
-  font-size: var(--step--1);
-  line-height: 1.25;
-  color: var(--chalk-rail);
+/*
+  How their last five games went, newest on the left: a green circle with a
+  tick for a game got out of, grey with a dash for a draw, red with a cross
+  for one they were the durak in. Always five: a game not played yet is an
+  empty ring, so a newcomer's row fills in from the left as they play. The
+  rings are also what shows while the results are on their way, so the panel
+  is its final size from the moment it opens.
+
+  The marks are cut out in the panel's own colour rather than drawn in white,
+  so each circle reads as one shape at this size. The row is the third line
+  beside the picture, and has to stay inside its share of the 72px.
+*/
+.pcard__form {
+  display: flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-height: 1.1rem;
+  margin-top: 0.1rem;
 }
+
+.form-dot { display: block; flex: 0 0 auto; width: 1rem; height: 1rem; }
+.form-dot circle { fill: var(--chalk-rail); }
+.form-dot path {
+  fill: none;
+  stroke: var(--rail-2);
+  stroke-width: 2.1;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+.form-dot--out circle { fill: var(--green-bright); }
+.form-dot--draw circle { fill: var(--chalk-rail); }
+.form-dot--durak circle { fill: var(--score-down); }
+.form-dot--empty circle { fill: none; stroke: var(--chalk-rail); stroke-opacity: 0.45; stroke-width: 1.5; }
 
 /* The hover target itself. Focusable, so the panel is reachable by keyboard
    as well, and marked so it is clear there is something to rest on. */
