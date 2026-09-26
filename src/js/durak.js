@@ -53,6 +53,8 @@ export const MIN_PLAYERS = 2;
 export const MAX_PLAYERS = 8;
 /** Nobody is dealt more than this many cards of one suit (see newGame). */
 export const MAX_SUIT_IN_DEAL = 4;
+/** Red and black suits. Nobody is dealt a hand of only one colour (see newGame). */
+export const RED_SUITS = ['H', 'D'];
 /** How many reshuffles to try for that before dealing what comes up. */
 const DEAL_ATTEMPTS = 200;
 
@@ -132,8 +134,9 @@ export function newGame(seed, playerCount) {
     throw new IllegalMove(`Durak needs ${MIN_PLAYERS} to ${MAX_PLAYERS} players.`);
   }
 
-  // Deal, and reshuffle if anyone catches more than four of a suit: a hand
-  // like that plays badly, and with one suit hoarded the round tends to stall.
+  // Deal, and reshuffle if anyone catches more than four of a suit, or a hand
+  // of only red or only black cards: a hand like that plays badly, and with
+  // one suit hoarded the round tends to stall.
   // The shuffles keep drawing from the same seeded stream, so this is still
   // the same deal every time for a given seed. On the rare table where no
   // shuffle satisfies it, the last one is dealt anyway rather than looping.
@@ -146,7 +149,7 @@ export function newGame(seed, playerCount) {
     for (let i = 0; i < HAND_SIZE; i++) {
       for (let seat = 0; seat < n; seat++) hands[seat].push(deck.pop());
     }
-    if (attempt >= DEAL_ATTEMPTS || hands.every(wellSpread)) break;
+    if (attempt >= DEAL_ATTEMPTS || hands.every(wellDealt)) break;
   }
 
   const trumpCard = deck[0];
@@ -179,15 +182,20 @@ export function newGame(seed, playerCount) {
   return state;
 }
 
-/** No more than MAX_SUIT_IN_DEAL cards of any one suit. */
-function wellSpread(hand) {
+/**
+ * An acceptable opening hand: no more than MAX_SUIT_IN_DEAL cards of any one
+ * suit, and at least one red card and one black card.
+ */
+export function wellDealt(hand) {
   const bySuit = new Map();
+  let reds = 0;
   for (const card of hand) {
     const count = (bySuit.get(card.s) ?? 0) + 1;
     if (count > MAX_SUIT_IN_DEAL) return false;
     bySuit.set(card.s, count);
+    if (RED_SUITS.includes(card.s)) reds++;
   }
-  return true;
+  return reds > 0 && reds < hand.length;
 }
 
 /** Lowest trump opens; seat 0 if nobody holds one. */

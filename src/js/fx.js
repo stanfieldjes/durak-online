@@ -24,6 +24,7 @@ export const FLIGHT_MS = {
   discard: 460,  // table to the beaten pile
   collect: 420,  // table to a hand
   draw: 360,     // stock to a hand
+  reveal: 560,   // the trump turning face up off the top of the stock
 };
 /** How long your hand takes to make room for a card, or close up after one. */
 export const SETTLE_MS = 220;
@@ -33,6 +34,10 @@ export const DRAW_GAP_MS = 85;
 export const DEAL_GAP_MS = 90;
 /** Roughly how long a whole deal should take, however many are playing. */
 export const DEAL_TOTAL_MS = 2200;
+/** The beat between the last card dealt and the trump being turned up. */
+export const REVEAL_PAUSE_MS = 260;
+/** The face-up trump sliding under the stock into its place. */
+export const TRUMP_SLIDE_MS = 380;
 
 let layer = null;
 let frame = 0;

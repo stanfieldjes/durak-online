@@ -26,6 +26,8 @@ import {
   MIN_PLAYERS,
   MAX_PLAYERS,
   MAX_SUIT_IN_DEAL,
+  RED_SUITS,
+  wellDealt,
 } from '../src/js/durak.js';
 
 const GAMES_PER_SIZE = 1200;
@@ -673,21 +675,35 @@ for (const good of [2, 3, 4, 5, 6, 7, 8]) {
   check(`a table of ${good} leaves ${size - good * 6} in the stock`, s.deck.length === size - good * 6);
 }
 
-/* ---- nobody is dealt more than four of a suit ------------------------- */
-console.log('Checking deals spread the suits...');
+/* ---- nobody is dealt more than four of a suit, or one colour ---------- */
+console.log('Checking deals spread the suits and colours...');
 {
   let worst = 0;
+  let oneColour = 0;
+  let hands = 0;
   for (let players = MIN_PLAYERS; players <= MAX_PLAYERS; players++) {
     for (let seed = 1; seed <= 600; seed++) {
       for (const hand of newGame(seed, players).hands) {
+        hands++;
         const bySuit = {};
         for (const card of hand) bySuit[card.s] = (bySuit[card.s] ?? 0) + 1;
         worst = Math.max(worst, ...Object.values(bySuit));
+        const reds = hand.filter((c) => RED_SUITS.includes(c.s)).length;
+        if (reds === 0 || reds === hand.length) oneColour++;
       }
     }
   }
   check(`no dealt hand holds more than ${MAX_SUIT_IN_DEAL} of a suit (worst was ${worst})`,
     worst <= MAX_SUIT_IN_DEAL);
+  check(`no dealt hand is all red or all black (${oneColour} of ${hands} were)`, oneColour === 0);
+
+  // The rule itself, on hands chosen to sit right at its edges.
+  const hand = (...ids) => ids.map((id) => ({ r: id.slice(0, -1), s: id.slice(-1) }));
+  check('four of a suit plus another colour is fine', wellDealt(hand('6H', '7H', '8H', '9H', '6S', '7C')));
+  check('five of a suit is refused', !wellDealt(hand('6H', '7H', '8H', '9H', '10H', '6S')));
+  check('all red is refused, even at four of a suit', !wellDealt(hand('6H', '7H', '8H', '9H', '6D', '7D')));
+  check('all black is refused', !wellDealt(hand('6S', '7S', '8S', 'JC', 'QC', 'KC')));
+  check('one card of the other colour is enough', wellDealt(hand('6S', '7S', '8S', 'JC', 'QC', 'KD')));
 }
 
 if (failures) {

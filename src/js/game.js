@@ -51,6 +51,8 @@ import {
   DRAW_GAP_MS,
   DEAL_GAP_MS,
   DEAL_TOTAL_MS,
+  REVEAL_PAUSE_MS,
+  TRUMP_SLIDE_MS,
 } from './fx.js';
 import { play as playSound, getVolume, setVolume, setSoundActive } from './sound.js';
 import { initTableSize, tableShown, tableHidden } from './tablesize.js';
@@ -106,6 +108,21 @@ let resultTimer = null;
 let spectating = false; // watching a game we are not seated at
 let dealing = false;    // opening hands still flying out
 let dealPlayed = false; // only deal once per visit to a table
+
+/**
+ * Where the trump card is in the opening reveal.
+ *
+ *   hidden    being dealt: the stock is all backs, nobody's trumps are ringed,
+ *             and hands are sorted without holding trumps apart
+ *   flipping  the top card of the stock is turning face up above it
+ *   sliding   the face-up trump slides under the stock into its place
+ *   shown     everything else — trumps ringed and held at the right
+ *
+ * Anything that stops motion (reduced motion, catching up, leaving the table)
+ * goes straight to shown.
+ */
+let trumpStage = 'shown';
+let trumpSlide = null; // the running slide animation, so it can be stopped
 
 let watchGen = 0;       // bumps on every (re)subscribe, so stale channel callbacks are ignored
 let live = false;       // the current channel has confirmed SUBSCRIBED
@@ -587,6 +604,16 @@ function stopMotion() {
   discarding.clear();
   dealt.clear();
   dealing = false;
+  trumpSlide?.cancel();
+  trumpSlide = null;
+  trumpStage = 'shown';
+  const trumpBox = document.getElementById('trump-card');
+  if (trumpBox) trumpBox.style.transform = '';
+}
+
+/** The trump suit, once the table has been shown it; null while it is still hidden. */
+function shownTrump(s = state) {
+  return trumpStage === 'shown' ? s?.trump ?? null : null;
 }
 
 /** Where every card is: in the stock, a seat's hand, or on the table. Missing means beaten. */
@@ -638,7 +665,7 @@ function planMoves(previous, next) {
   }
 
   const flights = [];
-  const trump = next.trump;
+  const trump = shownTrump(next);
 
   for (const { id, card, seat } of plays) {
     const mine = seat === mySeat;
@@ -699,6 +726,8 @@ function planMoves(previous, next) {
 /** The opening deal: one card at a time, round by round, starting with you. */
 function planDeal(next) {
   if (reducedMotion()) return [];
+  // The trump stays face down in the stock until every hand is dealt.
+  trumpStage = 'hidden';
   // Dealt round by round starting with you, or from seat 0 when watching.
   const first = spectating ? 0 : mySeat;
   const order = [];
@@ -738,7 +767,7 @@ function drawFlight(card, seat, trumpCard, delay) {
     key: id,
     from: () => (isTrump && boxOf($('#trump-card .card'))) || stockTopBox(),
     to: handTarget(seat),
-    face: mine || isTrump ? cardEl(card, { trump: state?.trump ?? trumpCard.s }) : null,
+    face: mine || isTrump ? cardEl(card, { trump: trumpStage === 'shown' ? trumpCard.s : null }) : null,
     flip: isTrump ? (mine ? null : 'down') : mine ? 'up' : null,
     duration: FLIGHT_MS.draw,
     delay,
@@ -774,18 +803,84 @@ function landed(id, box) {
     el.classList.remove('is-landing');
   }
 
+  // The last card of the deal is in: turn up the trump. The table stays
+  // "dealing" until it is in place.
   const finishedDeal = dealt.delete(id) && dealing && dealt.size === 0;
-  if (finishedDeal) dealing = false;
+  if (finishedDeal && !revealTrump()) finishDeal();
 
   const inMyHand = Boolean(state?.hands[mySeat]?.some((card) => cardId(card) === id));
-  if (state && (inMyHand || finishedDeal)) {
-    renderHand({ arrivals: inMyHand && box ? new Map([[id, box]]) : null });
-  }
-  if (finishedDeal) {
-    renderPrompt();
-    renderActions();
+  if (state && inMyHand) {
+    renderHand({ arrivals: box ? new Map([[id, box]]) : null });
   }
   refreshQuietParts();
+}
+
+/** The deal and the trump reveal are both over: play can start. */
+function finishDeal() {
+  dealing = false;
+  trumpStage = 'shown';
+  if (!state || !game) return;
+  // Trumps are ringed from here on, and your hand closes up with them moved
+  // to the right-hand end.
+  if (!spectating) renderHand({ resort: true });
+  renderOpponents();
+  renderSlots();
+  renderPrompt();
+  renderActions();
+  refreshQuietParts();
+}
+
+/**
+ * Turn up the trump: the top card of the stock lifts off, turns face up as
+ * it swings side on, and lands just clear of the stock, then slides left
+ * under it into the trump's place. Returns false when there is nothing to
+ * animate, so the caller finishes the deal straight away.
+ */
+function revealTrump() {
+  if (!state || state.deck.length === 0 || trumpStage !== 'hidden' || reducedMotion()) return false;
+  const trumpCard = state.trumpCard;
+  const key = `reveal:${cardId(trumpCard)}`;
+
+  return fly({
+    key,
+    from: stockTopBox,
+    // The trump's own element, pushed out to the right for now (see
+    // renderStock), so the card lands exactly where the slide begins.
+    to: () => boxOf($('#trump-card .card')),
+    face: cardEl(trumpCard),
+    flip: 'up',
+    duration: FLIGHT_MS.reveal,
+    delay: REVEAL_PAUSE_MS,
+    lift: 26,
+    onLaunch: () => {
+      // The top back leaves the pile as the card lifts off it.
+      trumpStage = 'flipping';
+      renderStock();
+    },
+    onLand: () => {
+      trumpStage = 'sliding';
+      renderStock();
+      playSound('play');
+      slideTrumpHome();
+    },
+    // Nothing to do if it is cancelled: only stopMotion() does that, and it
+    // puts the trump straight into its place itself.
+  });
+}
+
+/** The face-up trump slides from just clear of the stock to its place under it. */
+function slideTrumpHome() {
+  const box = $('#trump-card');
+  const from = box.style.transform;
+  box.style.transform = '';
+  trumpSlide = box.animate(
+    [{ transform: from || 'none' }, { transform: 'none' }],
+    { duration: TRUMP_SLIDE_MS, easing: 'cubic-bezier(0.3, 0.6, 0.2, 1)' }
+  );
+  trumpSlide.onfinish = () => {
+    trumpSlide = null;
+    if (trumpStage === 'sliding') finishDeal();
+  };
 }
 
 /**
@@ -1350,7 +1445,7 @@ function handRows(cards) {
     const fan = document.createElement('div');
     fan.className = 'fan fan--opponent';
     for (const card of list.slice(i, i + ROW_SIZE)) {
-      fan.append(card ? cardEl(card, { trump: state.trump }) : cardEl(null, { faceDown: true }));
+      fan.append(card ? cardEl(card, { trump: shownTrump() }) : cardEl(null, { faceDown: true }));
     }
     box.append(fan);
   }
@@ -1377,16 +1472,26 @@ function shownCards(seat) {
 function renderStock() {
   // Cards already drawn stay here until they actually leave.
   const inStock = state.deck.length + departing.size;
-  const trumpShowing = state.deck.length > 0 || departing.has(cardId(state.trumpCard));
-  const backs = Math.max(0, inStock - (trumpShowing ? 1 : 0));
+  const trumpInStock = state.deck.length > 0 || departing.has(cardId(state.trumpCard));
+  // While the hands are dealt the trump is one more back in the pile, and it
+  // is off the pile but not yet showing while it turns over (see revealTrump).
+  const trumpOffPile = trumpInStock && trumpStage !== 'hidden';
+  const trumpShowing = trumpOffPile && trumpStage !== 'flipping';
+  const backs = Math.max(0, inStock - (trumpOffPile ? 1 : 0));
 
   const trumpBox = $('#trump-card');
   const trumpEl = trumpBox.firstElementChild;
-  if (!trumpShowing) clear(trumpBox);
+  if (!trumpOffPile) clear(trumpBox);
   else if (trumpEl?.dataset.card !== cardId(state.trumpCard)) {
     clear(trumpBox);
-    trumpBox.append(cardEl(state.trumpCard, { trump: state.trump }));
+    trumpBox.append(cardEl(state.trumpCard));
   }
+  // Ringed along with every other trump, once it has slid into place.
+  trumpBox.firstElementChild?.classList.toggle('card--trump', trumpStage === 'shown');
+  trumpBox.firstElementChild?.classList.toggle('is-landing', trumpOffPile && !trumpShowing);
+  // Turning over, it lands just clear of the stock's right-hand edge, then
+  // slides back under (slideTrumpHome clears this as it starts).
+  if (trumpStage === 'flipping') trumpBox.style.transform = 'translateX(calc(var(--card-w) * 0.75))';
 
   // Drawing takes the top card, which is the last one in the stack.
   const pile = $('#deck-pile');
@@ -1427,12 +1532,12 @@ function renderSlots() {
   state.table.forEach((slot, index) => {
     const wrap = document.createElement('div');
     wrap.className = 'slot';
-    const atk = cardEl(slot.atk, { trump: state.trump });
+    const atk = cardEl(slot.atk, { trump: shownTrump() });
     atk.classList.toggle('is-landing', landing.has(cardId(slot.atk)));
     wrap.append(atk);
 
     if (slot.def) {
-      const def = cardEl(slot.def, { trump: state.trump });
+      const def = cardEl(slot.def, { trump: shownTrump() });
       def.classList.add('card--defence');
       def.classList.toggle('is-landing', landing.has(cardId(slot.def)));
       wrap.append(def);
@@ -1452,7 +1557,7 @@ function renderSlots() {
   });
 }
 
-function renderHand({ arrivals = null } = {}) {
+function renderHand({ arrivals = null, resort = false } = {}) {
   if (spectating) return; // no hand of our own to draw
   const box = $('#my-hand');
   const before = cardBoxes(box);
@@ -1479,7 +1584,7 @@ function renderHand({ arrivals = null } = {}) {
       : [];
     const playable = canAttack || openFor.length > 0;
 
-    const el = cardEl(card, { interactive: true, trump: state.trump });
+    const el = cardEl(card, { interactive: true, trump: shownTrump() });
     el.disabled = !playable;
     el.classList.toggle('card--dim', !playable);
     el.classList.toggle('is-playable', playable);
@@ -1501,7 +1606,7 @@ function renderHand({ arrivals = null } = {}) {
     box.append(el);
   }
 
-  settleHand(box, before, arrivals);
+  settleHand(box, before, arrivals, { resort });
 }
 
 /** Where each card in a fan currently shows, by card id, as centre and width. */
@@ -1521,7 +1626,7 @@ function cardBoxes(fan) {
  * leaving or arriving pushes the others aside instead of making them jump.
  * An arriving card starts from where its copy landed and grows into place.
  */
-function settleHand(fan, before, arrivals) {
+function settleHand(fan, before, arrivals, { resort = false } = {}) {
   if (reducedMotion() || (before.size === 0 && !arrivals)) return;
   for (const el of fan.children) {
     const id = el.dataset.card;
@@ -1542,7 +1647,9 @@ function settleHand(fan, before, arrivals) {
         { transform: `translate(${dx}px, ${dy}px) scale(${scale})` },
         { transform: 'translate(0, 0) scale(1)' },
       ],
-      { duration: SETTLE_MS, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)' }
+      // Trumps moving to the end after the reveal travel further, past the
+      // rest of the hand, so they get a little longer to do it.
+      { duration: resort ? SETTLE_MS * 2 : SETTLE_MS, easing: 'cubic-bezier(0.2, 0.7, 0.2, 1)' }
     );
   }
 }
@@ -1552,7 +1659,7 @@ function settleHand(fan, before, arrivals) {
  * the right-hand end where they are easy to find and hard to play by accident.
  */
 function byTrumpThenRank(a, b) {
-  const trump = state.trump;
+  const trump = shownTrump(); // null until the trump is turned up
   const aTrump = a.s === trump;
   const bTrump = b.s === trump;
   if (aTrump !== bTrump) return aTrump ? 1 : -1;
