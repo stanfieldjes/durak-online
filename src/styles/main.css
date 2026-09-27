@@ -11,11 +11,22 @@
   --table-deep: #0d4529;
   --table-line: #1f8352;
 
-  --red: #c8102e;
-  --red-bright: #e34156;
+  /* The one red for everything that is not a card: the tab underlines, the
+     danger button, a live table's edge, the attacker's frame, error text,
+     the chat badge, and every loss — the durak's ring and line, the ✕ in
+     the form circles, the chart dots, every rating that went down. Halfway
+     between the old dark red and the old light one: dark enough to read as
+     red rather than pink, light enough that a small "−18" is still legible
+     on the green. */
+  --red: #ea4a55;
+  /* Hover and focus: the same red, a step lighter. */
+  --red-bright: #f26a73;
+  /* Cards keep the reds they always had. */
+  --card-red: #c8102e;
+  --card-select: #e34156;
   --go: #f2f0ec;
   --go-ink: #0d2c1e;
-  --red-soft: #f0958f;
+  --red-soft: var(--red);
   /* The two colours of a result: a game got out of or rating gained is
      --green-bright, a game lost as the durak or rating dropped is
      --score-down. The form circles, the chart dots, every
@@ -23,10 +34,6 @@
      history, the durak's line on a result — all of them use these two, so a
      result reads the same wherever it is shown. */
   --green-bright: #46c184;
-  /* The site's own red, the one under the selected tab in the header. It is
-     dark against the green, so a small figure like "−18" in it reads less
-     easily than the green gains do; a lighter red (#ff7a70) was the
-     alternative, and was not the one wanted. */
   --score-down: var(--red);
   /* The gold of the emblem on the back of the cards, borrowed for whoever is
      top of the ladder. Defined once here and used by both. */
@@ -350,15 +357,8 @@ body {
 
 .pcard__head { display: grid; gap: 0.05rem; min-width: 0; }
 
-.pcard__title {
-  font-weight: 600;
-  line-height: 1.25;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
 
-.pcard__when { font-size: 0.72rem; color: var(--chalk-rail); }
+.pcard__when { font-size: var(--step--1); color: var(--chalk-dim); font-variant-numeric: tabular-nums; }
 
 .pcard__results {
   list-style: none;
@@ -1491,7 +1491,7 @@ a.btn { display: inline-block; text-decoration: none; }
 .prompt.is-attacking {
   color: #fff;
   font-weight: 500;
-  background: rgba(200, 16, 46, 0.22);
+  background: rgba(234, 74, 85, 0.2);   /* --red */
   border-color: var(--red);
 }
 
@@ -1613,7 +1613,7 @@ a.btn { display: inline-block; text-decoration: none; }
 .card__rank { display: block; }
 .card__suit { display: block; font-size: calc(var(--card-w) * 0.34); }
 
-.card--red { color: var(--red); }
+.card--red { color: var(--card-red); }
 
 /*
   Card back: a gold hammer and sickle on cranberry, over a fine cream lattice
@@ -1670,7 +1670,7 @@ button.card.is-playable:focus-visible {
 
 button.card.is-selected {
   transform: translateY(-18px);
-  box-shadow: 0 0 0 2px var(--red-bright), 0 10px 22px rgba(0, 0, 0, 0.6);
+  box-shadow: 0 0 0 2px var(--card-select), 0 10px 22px rgba(0, 0, 0, 0.6);
   z-index: 3;
 }
 
@@ -1794,7 +1794,7 @@ button.card.is-selected {
 
 .ranks th:first-child, .ranks td:first-child { text-align: left; }
 .ranks th { color: var(--chalk-rail); font-weight: 500; font-size: var(--step--1); }
-.ranks tbody tr.is-me { background: rgba(200, 16, 46, 0.16); }
+.ranks tbody tr.is-me { background: rgba(234, 74, 85, 0.14); }   /* --red */
 
 /* On the leaderboard the lead carries a little extra weight as well as the
    colour, since this is the table the standing is actually about. */

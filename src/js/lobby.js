@@ -56,10 +56,27 @@ export function initLobby() {
   $('#recent-games').addEventListener('scroll', maybeLoadOlder, { passive: true });
 }
 
-function refreshSoon() {
+/**
+ * Re-read the lobby, a moment after whatever prompted it, so a burst of
+ * changes is one read.
+ *
+ * The tables are re-read every time: a move anywhere changes how a running
+ * table stands. The history and the players are re-read only when a game has
+ * finished, or when the lobby may have missed something (back in view, back
+ * online, a dropped connection) — a move changes neither, and moves arrive
+ * every second or two while anybody is playing. Re-reading both on each one
+ * is what made the lobby slow on a phone.
+ */
+let refreshEverything = false;
+
+function refreshSoon(everything = false) {
+  if (everything) refreshEverything = true;
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
+    const all = refreshEverything;
+    refreshEverything = false;
     refresh();
+    if (!all) return;
     // A game finishing moves ratings, which the players' panels show.
     refreshPlayers();
     // Games finishing elsewhere arrive at the top of the history. Somebody
@@ -68,9 +85,14 @@ function refreshSoon() {
   }, 350); // coalesce bursts of row changes
 }
 
-/** Back in view or back online: the list may have changed while we were away. */
+/** A row changed somewhere. Only a game reaching its end touches the history. */
+function onLobbyChange(payload) {
+  refreshSoon(payload?.table === 'games' && payload?.new?.status === 'finished');
+}
+
+/** Back in view or back online: anything may have changed while we were away. */
 function onWake() {
-  if (document.visibilityState === 'visible') refreshSoon();
+  if (document.visibilityState === 'visible') refreshSoon(true);
 }
 
 export function enterLobby() {
@@ -85,10 +107,16 @@ export function enterLobby() {
   refreshPlayers();
   // "3m ago" has to become "4m ago" without anything else happening.
   playersTimer = setInterval(retimePlayers, 30000);
-  // Each SUBSCRIBED, including rejoins after a dropped connection, re-reads the
-  // list, since realtime does not replay what it missed while disconnected.
-  unwatch = watchLobby(refreshSoon, (status) => {
-    if (status === 'SUBSCRIBED') refreshSoon();
+  // Realtime does not replay what it missed while disconnected, so every
+  // rejoin re-reads everything. The first SUBSCRIBED only has the moment
+  // since the reads above to cover, which is the tables' business alone:
+  // re-reading the history and the players then as well read each of them
+  // twice on the way into the lobby.
+  let subscribedBefore = false;
+  unwatch = watchLobby(onLobbyChange, (status) => {
+    if (status !== 'SUBSCRIBED') return;
+    refreshSoon(subscribedBefore);
+    subscribedBefore = true;
   });
   document.addEventListener('visibilitychange', onWake);
   window.addEventListener('online', onWake);
@@ -105,6 +133,7 @@ export function leaveLobby() {
   clearInterval(playersTimer);
   playersTimer = null;
   clearTimeout(refreshTimer);
+  refreshEverything = false;
   clearInterval(pollTimer);
   pollTimer = null;
   refreshSeq++; // drop any refresh still in flight
@@ -593,9 +622,9 @@ function whenExactly(iso) {
 }
 
 /**
- * The panel for one finished game: who was the durak, when it ended, and a
- * line per player with what the game did to their rating — best off at the
- * top, the durak at the bottom in red, the way the result screen reads.
+ * The panel for one finished game: when it ended, and a line per player
+ * with what the game did to their rating — best off at the top, the durak
+ * at the bottom in red, the way the result screen reads.
  */
 function fillGameCard(panel, game) {
   panel.classList.add('pcard--game');
@@ -606,25 +635,16 @@ function fillGameCard(panel, game) {
     return raw === undefined || raw === null ? null : Number(raw);
   };
 
+  // Only when it ended. Who the durak was is already on the panel, in bold
+  // red at the bottom.
   const head = document.createElement('div');
   head.className = 'pcard__head';
-
-  const title = document.createElement('span');
-  title.className = 'pcard__title';
-  if (!game.durak_id) {
-    title.textContent = 'Draw';
-  } else {
-    const durak = (game.players ?? []).find((p) => p.player_id === game.durak_id);
-    title.textContent = game.durak_id === me
-      ? 'You were the durak'
-      : `${nameOf(durak)} was the durak`;
-  }
 
   const when = document.createElement('span');
   when.className = 'pcard__when';
   when.textContent = whenExactly(game.updated_at ?? game.created_at);
 
-  head.append(title, when);
+  head.append(when);
 
   const rows = document.createElement('ul');
   rows.className = 'pcard__results';
