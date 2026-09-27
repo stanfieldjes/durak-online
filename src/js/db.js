@@ -1,8 +1,12 @@
 import { supabase } from './supabase.js';
 import { MAX_PLAYERS } from './durak.js';
 
-/** How many finished games one page of the recent games list holds. */
-export const RECENT_PER_PAGE = 10;
+/**
+ * How many finished games the lobby's history reads at a time. The list shows
+ * ten and scrolls; each read runs ahead of what is on screen, so scrolling
+ * down finds rows already there rather than waiting on one.
+ */
+export const RECENT_BATCH = 20;
 
 /** Where profile pictures live. Created by supabase/schema.sql. */
 const AVATAR_BUCKET = 'avatars';
@@ -19,6 +23,29 @@ export async function getProfile(userId) {
     .maybeSingle();
   if (error) throw error;
   return data;
+}
+
+/**
+ * Everybody with a profile, for the lobby's Players section, most recently
+ * seen first. `last_seen_at` comes from the `players` view: the last time a
+ * browser of theirs said it was open (touchLastSeen), or for somebody not seen
+ * since that was added, the latest of their last finished game and the day
+ * they signed up — the last moment they are known to have been here.
+ */
+export async function getPlayers(limit = 100) {
+  const { data, error } = await supabase
+    .from('players')
+    .select(`${PROFILE_COLUMNS}, last_seen_at`)
+    .order('last_seen_at', { ascending: false, nullsFirst: false })
+    .limit(limit);
+  if (error) throw error;
+  return data ?? [];
+}
+
+/** Record that you are on the site right now. See presence.js. */
+export async function touchLastSeen() {
+  const { error } = await supabase.rpc('touch_last_seen');
+  if (error) throw error;
 }
 
 export async function createProfile(userId, username) {
@@ -171,22 +198,27 @@ export async function listTables(limit = 30) {
 }
 
 /**
- * One page of finished games — everybody's, not just yours.
+ * Finished games — everybody's, not just yours — newest first.
  *
  * Ordered by when the game ended rather than when its table was opened, since
- * a long game started before a short one can finish after it. The count comes
- * back with the page so the pager knows how many there are in total.
+ * a long game started before a short one can finish after it.
+ *
+ * `before` is the end time of the oldest game already on screen, and the read
+ * carries on from there. A cursor rather than an offset: games finish while
+ * somebody is scrolling, and an offset would then hand back rows they have
+ * already seen.
  */
-export async function listRecentGames({ page = 0, perPage = RECENT_PER_PAGE } = {}) {
-  const from = Math.max(0, page) * perPage;
-  const { data, error, count } = await supabase
+export async function listRecentGames({ before = null, limit = RECENT_BATCH } = {}) {
+  let query = supabase
     .from('games')
-    .select(GAME_COLUMNS, { count: 'exact' })
-    .eq('status', 'finished')
+    .select(GAME_COLUMNS)
+    .eq('status', 'finished');
+  if (before) query = query.lt('updated_at', before);
+  const { data, error } = await query
     .order('updated_at', { ascending: false })
-    .range(from, from + perPage - 1);
+    .limit(limit);
   if (error) throw error;
-  return { games: (data ?? []).map(withSortedSeats), total: count ?? 0 };
+  return (data ?? []).map(withSortedSeats);
 }
 
 /**
@@ -448,4 +480,56 @@ export function watchLobby(onChange, onStatus) {
     .on('postgres_changes', { event: '*', schema: 'public', table: 'game_players' }, onChange)
     .subscribe((status, err) => onStatus?.(status, err));
   return () => supabase.removeChannel(channel);
+}
+
+/**
+ * Who has the site open, through Realtime Presence. Nothing is stored: each
+ * browser announces itself on one shared channel and the server tells every
+ * browser on it who else is there, dropping anyone whose connection goes.
+ *
+ * Unlike the channels above, this one needs the same name for everybody —
+ * presence is shared per channel — so it cannot take a fresh name per join.
+ * It is joined once per signed-in session (presence.js) rather than per view,
+ * which keeps it clear of the leave-then-rejoin race channelName() avoids.
+ *
+ * Keyed by user id, so three tabs of one player are one entry. `onSync` gets
+ * the ids present after every change. Realtime rebuilds presence on each
+ * rejoin, so the announcement is repeated on every SUBSCRIBED.
+ */
+const PRESENCE_CHANNEL = 'online';
+
+export function joinPresence(userId, onSync) {
+  let joined = false;
+  let wanted = true;
+
+  const channel = supabase.channel(PRESENCE_CHANNEL, {
+    config: { presence: { key: userId } },
+  });
+
+  const announce = () => {
+    if (joined && wanted) channel.track({ at: new Date().toISOString() }).catch(() => {});
+  };
+
+  channel
+    .on('presence', { event: 'sync' }, () => onSync(Object.keys(channel.presenceState())))
+    .subscribe((status) => {
+      joined = status === 'SUBSCRIBED';
+      announce();
+    });
+
+  return {
+    /** Be listed again, after untrack(). */
+    track() {
+      wanted = true;
+      announce();
+    },
+    /** Stop being listed while still watching who else is. */
+    untrack() {
+      wanted = false;
+      if (joined) channel.untrack().catch(() => {});
+    },
+    leave() {
+      return supabase.removeChannel(channel);
+    },
+  };
 }

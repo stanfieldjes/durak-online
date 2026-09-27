@@ -15,6 +15,7 @@ import { enterLeaderboard } from './leaderboard.js';
 import { initAccount, enterAccount } from './account.js';
 import { initSound } from './sound.js';
 import { refreshStandings } from './standing.js';
+import { startPresence, stopPresence } from './presence.js';
 
 let current = null;
 
@@ -40,6 +41,16 @@ function teardown() {
   if (current === 'lobby') leaveLobby();
   if (current === 'game') leaveGame();
   current = null;
+}
+
+/**
+ * Listed as active for as long as the site is open, on any view. Only once
+ * there is a profile to show: an account part-way through signing up has no
+ * name or picture yet.
+ */
+function syncPresence() {
+  if (session.user && session.profile) startPresence(session.user.id);
+  else stopPresence();
 }
 
 async function route() {
@@ -90,14 +101,20 @@ async function boot() {
   // Who is top and who is bottom, so the first name drawn anywhere is already
   // in the right colour. Never worth blocking the boot over.
   refreshStandings();
-  initAuthView(() => { location.hash = '#/'; route(); });
+  initAuthView(() => {
+    syncPresence();
+    location.hash = '#/';
+    route();
+  });
   initLobby();
   initGame();
   initAccount();
   renderWhoami();
+  syncPresence();
 
   onAuthChange(() => {
     renderWhoami();
+    syncPresence();
     current = null;
     route();
   });

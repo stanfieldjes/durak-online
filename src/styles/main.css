@@ -199,6 +199,9 @@ body {
 
 .avatar--xs { --avatar-size: 1.25rem; }
 .avatar--sm { --avatar-size: 1.7rem; }
+/* The lobby's Players section: pictures with no names beside them, so
+   a size up from the ones that sit next to a name. */
+.avatar--md { --avatar-size: 2.25rem; }
 .avatar--lg { --avatar-size: 5.5rem; font-size: 2.4rem; }
 
 /* The hover panel's picture. Sized to clear the text beside it — see .pcard. */
@@ -214,7 +217,7 @@ body {
   Worked out from the ratings rather than stored on anybody, so the gold
   changes hands as results come in — see standing.js.
 
-  Not in the recent-games list, which already names the durak of each game.
+  Not in the recent-games list, whose panels are about who was the durak.
   And never the only signal: the leaderboard prints the place beside the name,
   and everywhere else the rating itself is next to it.
 */
@@ -321,6 +324,58 @@ body {
 .form-dot--draw circle { fill: var(--chalk-rail); }
 .form-dot--durak circle { fill: var(--score-down); }
 .form-dot--empty circle { fill: none; stroke: var(--chalk-rail); stroke-opacity: 0.45; stroke-width: 1.5; }
+
+/*
+  The same panel over a finished game in the lobby's history: what happened
+  and when, then a line per player with what the game did to their rating.
+  Stacked rather than picture-beside-text, and a fixed width so the numbers
+  down the right line up from one game to the next.
+*/
+.pcard--game {
+  display: grid;
+  align-items: stretch;
+  gap: 0.6rem;
+  width: 15.5rem;
+}
+
+.pcard__head { display: grid; gap: 0.05rem; min-width: 0; }
+
+.pcard__title {
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcard__when { font-size: 0.72rem; color: var(--chalk-rail); }
+
+.pcard__results {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0.3rem;
+  font-size: var(--step--1);
+  font-variant-numeric: tabular-nums;
+}
+
+.pcard__result { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
+
+.pcard__result-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pcard__result-delta { min-width: 5ch; text-align: right; font-weight: 500; }
+
+/* Your own line, so you can find it; the durak's, set apart at the bottom. */
+.pcard__result.is-me .pcard__result-name { font-weight: 600; }
+.pcard__result.is-durak { padding-top: 0.3rem; border-top: 1px solid var(--rail-line); }
+.pcard__result.is-durak .pcard__result-name { color: var(--red-soft); }
 
 /* The hover target itself. Focusable, so the panel is reachable by keyboard
    as well, and marked so it is clear there is something to rest on. */
@@ -789,47 +844,162 @@ body {
 
 a.btn { display: inline-block; text-decoration: none; }
 
+/* ---------- players ---------- */
+
+/*
+  Everybody, as pictures with a one-word caption and nothing else. Who is
+  online comes first, with a green dot and "online" under them; then a
+  hairline; then everyone else, most recently seen first, dimmed, with how
+  long ago that was, written the same way as the times in the history.
+  Resting on a picture opens the same panel as anywhere else on the site,
+  which has the name.
+
+  Every tile is the same width, so the captions line up in a grid however
+  long "22h ago" is compared with "3d ago".
+*/
+.players {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: stretch;
+  gap: 0.7rem 0.4rem;
+}
+
+.players:empty { display: none; }
+
+.players__item {
+  width: 3.4rem;
+  display: grid;
+  justify-items: center;
+  gap: 0.3rem;
+}
+
+.players__face {
+  position: relative;
+  display: block;
+  border-radius: max(2px, calc(2.25rem * 0.12));
+}
+
+.players__face .avatar { display: grid; }
+
+.players__item.is-online .players__face::after {
+  content: '';
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 0.7rem;
+  height: 0.7rem;
+  border-radius: 50%;
+  background: var(--green-bright);
+  border: 2px solid var(--rail);
+  pointer-events: none;
+}
+
+/* Not here now: still recognisable, but plainly set back from who is. Full
+   strength again while being looked at. */
+.players__item:not(.is-online) .avatar {
+  opacity: 0.5;
+  filter: saturate(0.45);
+  transition: opacity 120ms ease, filter 120ms ease;
+}
+
+.players__item:not(.is-online) .players__face:hover .avatar,
+.players__item:not(.is-online) .players__face:focus-visible .avatar {
+  opacity: 1;
+  filter: none;
+}
+
+.players__when {
+  font-size: 0.72rem;
+  line-height: 1;
+  color: var(--chalk-rail);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.players__item.is-online .players__when { color: var(--green-bright); }
+
+/* Between who is online and who is not: a hairline the height of a picture. */
+.players__rule {
+  align-self: start;
+  width: 1px;
+  height: 2.25rem;
+  margin-inline: 0.45rem;
+  background: var(--rail-line);
+}
+
 /* ---------- recent games ---------- */
 
 /*
-  Every finished game on the site, not only your own. A game you were at is
-  marked down the left edge — green if you got out, red if you were the one
-  left holding the cards — so your own history still stands out of the feed.
+  Every finished game on the site, not only your own, newest first, in one
+  list that shows ten and scrolls; older games are read in as it nears the
+  bottom. A row is only the faces of who was at the table and how long ago it
+  ended, so every row lines up with every other. The durak is always the
+  first face and is ringed in red, which puts the loser of every game in the
+  same place down the list. Resting on a row opens the panel with the result
+  and every player's change.
+
+  Every row is the same height, which is what lets the list be exactly ten
+  rows tall: ten rows, the nine hairlines between them, and the border.
+
+  A game you were at is marked down the left edge — green if you got out, red
+  if you were the one left holding the cards — so your own history still
+  stands out of the feed.
 */
+.history {
+  --history-row: 2.9rem;
+  max-height: calc(var(--history-row) * 10 + 9px + 2px);
+  overflow-y: auto;
+  overscroll-behavior: contain;   /* reaching the end never scrolls the page */
+  /* A game arriving at the top while the reader is scrolled down is
+     compensated for in lobby.js (prependRecent). Chrome and Firefox would do
+     it too, on their own, and the two together moved the list twice; Safari
+     does not do it at all. One way that behaves the same everywhere. */
+  overflow-anchor: none;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rail-line) transparent;
+}
+
+.history li { height: var(--history-row); padding-block: 0; flex-shrink: 0; }
+
 .history li.is-mine { box-shadow: inset 3px 0 0 var(--green-bright); }
 .history li.is-my-loss { box-shadow: inset 3px 0 0 var(--red); }
 
-.history__who { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
-/* Picture and name together, so both are one hover target for the panel. */
-.history__player { display: flex; align-items: center; gap: 0.5rem; min-width: 0; }
-.history__name { font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.history__verb { color: var(--chalk-rail); font-size: var(--step--1); white-space: nowrap; }
-.history__draw { font-weight: 500; color: var(--chalk-rail); }
-.history__meta { margin-left: 0.4rem; }
+.history li.has-card { border-radius: 0; }
+.history li.has-card:hover { background: #164530; }
+.history li.has-card:focus-visible { outline-offset: -2px; }
 
-.history .delta { margin-left: auto; font-variant-numeric: tabular-nums; font-weight: 500; }
-.delta--up { color: var(--green-bright); }
-.delta--down { color: var(--red-soft); }
-.delta--flat { color: var(--chalk-rail); }
-
-/* Not your game, so it did nothing to your rating. Quieter than a zero. */
-.history__delta { white-space: nowrap; }
-
-.pager {
+.history__faces {
   display: flex;
   align-items: center;
-  justify-content: center;
-  gap: 0.8rem;
-  margin-top: 0.9rem;
+  gap: 0.3rem;
+  min-width: 0;
+  overflow: hidden;
+  /* Room for the durak's ring, which is drawn outside the picture. */
+  padding: 3px;
+  margin: -3px;
 }
 
-.pager__count {
+.history__faces .avatar.is-durak {
+  outline: 2px solid var(--score-down);
+  outline-offset: 1px;
+  margin-right: 0.3rem;
+}
+
+.history__time {
+  margin-left: auto;
+  flex-shrink: 0;
   color: var(--chalk-rail);
   font-size: var(--step--1);
   font-variant-numeric: tabular-nums;
-  min-width: 10ch;
-  text-align: center;
+  white-space: nowrap;
 }
+
+.delta--up { color: var(--green-bright); }
+.delta--down { color: var(--red-soft); }
+.delta--flat { color: var(--chalk-rail); }
 
 /* ---------- waiting room ---------- */
 
@@ -1904,11 +2074,9 @@ button.card.is-selected {
   .opponents--side { width: auto; grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .player__role { margin-left: 0; width: 100%; }
 
-  /* A game in the feed wraps rather than squeezing the names, and so does a
-     table, with its buttons dropping below. */
-  .history li, .tables li { flex-wrap: wrap; }
-  .history__meta { width: 100%; margin-left: 0; }
-  .history .delta { margin-left: auto; }
+  /* A table wraps rather than squeezing the names, with its buttons dropping
+     below. A game in the history is faces and a time, and fits as it is. */
+  .tables li { flex-wrap: wrap; }
 
   /* Open, the chat takes the width of the phone. The field is 16px because
      iOS zooms the whole page into any smaller one on focus. */

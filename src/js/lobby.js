@@ -7,7 +7,7 @@ import {
   listRecentGames,
   listMyTables,
   watchLobby,
-  RECENT_PER_PAGE,
+  RECENT_BATCH,
 } from './db.js';
 import { readableError } from './supabase.js';
 import { session, ratingOf } from './auth.js';
@@ -15,9 +15,10 @@ import { newGame, openSlots } from './durak.js';
 import { formatRating } from './rating.js';
 import {
   $, show, setText, clear, toast, relativeTime, playerEl, avatarEl, paintDelta,
-  attachProfileCard,
+  attachProfileCard, attachHoverCard,
 } from './ui.js';
 import { refreshStandings } from './standing.js';
+import { playerList, onPlayersChange, refreshPlayers } from './presence.js';
 
 /**
  * How often a visible lobby re-reads the table list on its own. Realtime
@@ -25,29 +26,45 @@ import { refreshStandings } from './standing.js';
  */
 const LOBBY_POLL_MS = 20000;
 
+/**
+ * Older games are read once the history is scrolled to within this many
+ * rows of the bottom, so the next ones are usually there before they are
+ * reached.
+ */
+const RECENT_LOOKAHEAD_ROWS = 4;
+
 let unwatch = null;
+let unwatchPlayers = null;
+let playersTimer = null;
+let playerTimes = [];   // offline captions, retimed in place: { el, at }
 let refreshTimer = null;
 let pollTimer = null;
 let refreshSeq = 0;   // only the newest refresh gets to draw
-let recentSeq = 0;    // the same, for the recent games list
 let myTable = null;   // the waiting table I am sitting at, if any
-let recentPage = 0;   // which page of finished games is on screen
-let recentTotal = 0;
+
+// The history list. Rows are added at either end and never redrawn wholesale,
+// which is what keeps the reader's place in it while it grows.
+let recentGames = [];           // on screen, newest first
+const recentRows = new Map();   // game id -> { li, time, at }
+let recentDone = false;         // nothing older left to read
+let loadingOlder = false;
+let recentEpoch = 0;            // bumped on reset, so late reads are dropped
+let recentSeq = 0;              // only the newest refresh gets to draw
 
 export function initLobby() {
   $('#create-game').addEventListener('click', onCreate);
-  $('#recent-prev').addEventListener('click', () => turnTo(recentPage - 1));
-  $('#recent-next').addEventListener('click', () => turnTo(recentPage + 1));
+  $('#recent-games').addEventListener('scroll', maybeLoadOlder, { passive: true });
 }
 
 function refreshSoon() {
   clearTimeout(refreshTimer);
   refreshTimer = setTimeout(() => {
     refresh();
-    // Games finishing elsewhere change this list, but only while the reader is
-    // looking at the newest page. Somebody paging back through the history
-    // should not have the ground move under them.
-    if (recentPage === 0) refreshRecent();
+    // A game finishing moves ratings, which the players' panels show.
+    refreshPlayers();
+    // Games finishing elsewhere arrive at the top of the history. Somebody
+    // scrolled down through it keeps their place (refreshRecent).
+    refreshRecent();
   }, 350); // coalesce bursts of row changes
 }
 
@@ -57,12 +74,17 @@ function onWake() {
 }
 
 export function enterLobby() {
-  recentPage = 0;
+  resetRecent();
   // A table finishing anywhere can change hands at either end of the ladder,
   // and the host names below are drawn in those colours.
   refreshStandings();
   refresh();
   refreshRecent();
+  renderPlayers(playerList());
+  unwatchPlayers = onPlayersChange(renderPlayers);
+  refreshPlayers();
+  // "3m ago" has to become "4m ago" without anything else happening.
+  playersTimer = setInterval(retimePlayers, 30000);
   // Each SUBSCRIBED, including rejoins after a dropped connection, re-reads the
   // list, since realtime does not replay what it missed while disconnected.
   unwatch = watchLobby(refreshSoon, (status) => {
@@ -78,14 +100,86 @@ export function enterLobby() {
 export function leaveLobby() {
   if (unwatch) unwatch();
   unwatch = null;
+  if (unwatchPlayers) unwatchPlayers();
+  unwatchPlayers = null;
+  clearInterval(playersTimer);
+  playersTimer = null;
   clearTimeout(refreshTimer);
   clearInterval(pollTimer);
   pollTimer = null;
   refreshSeq++; // drop any refresh still in flight
-  recentSeq++;
+  recentEpoch++;
   document.removeEventListener('visibilitychange', onWake);
   window.removeEventListener('online', onWake);
 }
+
+/* ------------------------------------------------------------------ */
+/* players                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Everybody, as a row of pictures: who is online on the left, then everyone
+ * else, most recently seen first, under a caption saying how long ago that
+ * was — written the same way as the times in the history. No names: resting
+ * on a picture opens the same panel as anywhere else on the site, which has
+ * the name, the rating and their last five games.
+ */
+function renderPlayers({ online, offline }) {
+  const list = $('#players');
+  if (!list) return;
+  clear(list);
+  playerTimes = [];
+
+  for (const profile of online) list.append(playerTile(profile, true));
+  if (online.length && offline.length) {
+    const rule = document.createElement('li');
+    rule.className = 'players__rule';
+    rule.setAttribute('aria-hidden', 'true');
+    list.append(rule);
+  }
+  for (const profile of offline) list.append(playerTile(profile, false));
+}
+
+function playerTile(profile, online) {
+  const li = document.createElement('li');
+  li.className = online ? 'players__item is-online' : 'players__item';
+
+  const face = document.createElement('span');
+  face.className = 'players__face';
+  face.setAttribute('role', 'img');
+  face.append(avatarEl(profile, { size: 'md' }));
+  attachProfileCard(face, profile);
+
+  const when = document.createElement('span');
+  when.className = 'players__when';
+  const name = profile.username ?? 'unknown';
+  if (online) {
+    when.textContent = 'online';
+    face.setAttribute('aria-label', `${name}, online`);
+  } else if (profile.last_seen_at) {
+    when.textContent = relativeTime(profile.last_seen_at);
+    face.setAttribute('aria-label', `${name}, last online ${when.textContent}`);
+    playerTimes.push({ el: when, face, name, at: profile.last_seen_at });
+  } else {
+    when.textContent = '—';
+    face.setAttribute('aria-label', name);
+  }
+
+  li.append(face, when);
+  return li;
+}
+
+/** Bring every "last online" caption up to date, without redrawing a thing. */
+function retimePlayers() {
+  for (const { el, face, name, at } of playerTimes) {
+    el.textContent = relativeTime(at);
+    face.setAttribute('aria-label', `${name}, last online ${el.textContent}`);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* tables                                                              */
+/* ------------------------------------------------------------------ */
 
 async function onCreate(event) {
   // Opening a new table closes the one you host. Only worth asking about when
@@ -312,118 +406,259 @@ function statusFor(state, seat) {
 /* recent games                                                        */
 /* ------------------------------------------------------------------ */
 
-function turnTo(page) {
-  const lastPage = Math.max(0, Math.ceil(recentTotal / RECENT_PER_PAGE) - 1);
-  const next = Math.min(Math.max(0, page), lastPage);
-  if (next === recentPage) return;
-  recentPage = next;
-  refreshRecent();
+/**
+ * Every finished game on the site, not only your own, newest first, in one
+ * list that shows ten and scrolls. The first read fills it; older games are
+ * read as the reader scrolls toward the bottom (maybeLoadOlder), and games
+ * finishing elsewhere are added at the top (refreshRecent).
+ *
+ * A row is the faces of who was at the table and how long ago it ended,
+ * nothing else, so every row lines up with every other. The durak comes first
+ * and is ringed in red, which puts the loser of every game in the same place
+ * down the list. Resting on a row opens a panel with the result and what the
+ * game did to each player's rating.
+ */
+
+/** Empty the list, ready for a fresh first read. */
+function resetRecent() {
+  recentEpoch++;
+  recentSeq++;
+  recentGames = [];
+  recentRows.clear();
+  recentDone = false;
+  loadingOlder = false;
+  const list = $('#recent-games');
+  clear(list);
+  list.scrollTop = 0;
+  show($('#no-history'), false);
 }
 
+/**
+ * Read the newest games and put any that are not on screen yet at the top.
+ *
+ * Nothing already there is redrawn, so a row being hovered stays put. If the
+ * reader has scrolled down, the list is moved by exactly the height that was
+ * added above them, so what they were looking at does not jump. Every row's
+ * "3m ago" is brought up to date on the way through.
+ */
 async function refreshRecent() {
   if (!session.user) return;
   const seq = ++recentSeq;
+  const epoch = recentEpoch;
   try {
-    const { games, total } = await listRecentGames({ page: recentPage });
-    if (seq !== recentSeq) return;
+    const games = await listRecentGames();
+    if (seq !== recentSeq || epoch !== recentEpoch) return;
 
-    // Games can be deleted, or the last one on a page can move to the page
-    // before while somebody is looking at it. Rather than show an empty list,
-    // step back to the last page that has anything on it.
-    if (games.length === 0 && total > 0 && recentPage > 0) {
-      recentPage = Math.max(0, Math.ceil(total / RECENT_PER_PAGE) - 1);
+    if (recentGames.length === 0) {
+      appendRecent(games);
+      recentDone = games.length < RECENT_BATCH;
+      show($('#no-history'), games.length === 0);
+      maybeLoadOlder();
+      return;
+    }
+
+    const fresh = games.filter((game) => !recentRows.has(game.id));
+    // A whole batch of games nobody has seen means more finished while the
+    // list was away than one read can bridge. Rather than leave a hole in the
+    // middle of the history, start it again from the top.
+    if (fresh.length === RECENT_BATCH) {
+      resetRecent();
       refreshRecent();
       return;
     }
 
-    recentTotal = total;
-    renderRecent(games);
-    renderPager();
+    prependRecent(fresh.filter((game) => endedAt(game) > endedAt(recentGames[0])));
+    retimeRecent();
   } catch (error) {
     if (seq === recentSeq) toast(readableError(error));
   }
 }
 
-/**
- * Every finished game on the site, not only your own: who was left holding
- * the cards, who else was at the table, and what the game did to your rating
- * if you were at it.
- */
-function renderRecent(games) {
+/** Read the next older games once the reader is near the bottom of the list. */
+function maybeLoadOlder() {
   const list = $('#recent-games');
-  clear(list);
-  show($('#no-history'), games.length === 0 && recentTotal === 0);
+  if (!list || loadingOlder || recentDone || recentGames.length === 0) return;
+  const row = list.firstElementChild?.offsetHeight || 44;
+  const left = list.scrollHeight - list.scrollTop - list.clientHeight;
+  if (left <= row * RECENT_LOOKAHEAD_ROWS) loadOlder();
+}
 
+async function loadOlder() {
+  const epoch = recentEpoch;
+  loadingOlder = true;
+  try {
+    const oldest = recentGames[recentGames.length - 1];
+    const games = await listRecentGames({ before: endedAt(oldest) });
+    if (epoch !== recentEpoch) return;   // reset or left while this was out
+    appendRecent(games.filter((game) => !recentRows.has(game.id)));
+    recentDone = games.length < RECENT_BATCH;
+  } catch (error) {
+    if (epoch === recentEpoch) toast(readableError(error));
+  } finally {
+    if (epoch === recentEpoch) loadingOlder = false;
+  }
+  // Still near the bottom (a tall screen, or a fast flick): keep going.
+  if (epoch === recentEpoch) maybeLoadOlder();
+}
+
+function endedAt(game) {
+  return game?.updated_at ?? game?.created_at;
+}
+
+function appendRecent(games) {
+  const list = $('#recent-games');
   for (const game of games) {
-    const seats = game.players ?? [];
-    const durak = seats.find((p) => p.player_id === game.durak_id)?.profile ?? null;
-    const iPlayed = seats.some((p) => p.player_id === session.user.id);
-    const raw = game.rating_delta?.[session.user.id];
-    const mine = raw === undefined || raw === null ? null : Number(raw);
-
-    const li = document.createElement('li');
-    if (game.durak_id === session.user.id) li.classList.add('is-my-loss');
-    else if (iPlayed) li.classList.add('is-mine');
-
-    const who = document.createElement('span');
-    who.className = 'history__who';
-    if (!game.durak_id) {
-      const draw = document.createElement('span');
-      draw.className = 'history__draw';
-      draw.textContent = 'Draw';
-      who.append(draw);
-    } else {
-      // The picture and the name are one hover target, not two: they are one
-      // person, and resting on the face of somebody you are trying to place
-      // is at least as natural as resting on their name.
-      const player = document.createElement('span');
-      player.className = 'history__player';
-      const name = document.createElement('span');
-      name.className = 'history__name';
-      name.textContent = game.durak_id === session.user.id
-        ? 'You'
-        : durak?.username ?? 'Someone';
-      player.append(avatarEl(durak, { size: 'sm' }), name);
-      attachProfileCard(player, durak);
-
-      const verb = document.createElement('span');
-      verb.className = 'history__verb';
-      verb.textContent = game.durak_id === session.user.id ? 'were the durak' : 'was the durak';
-      who.append(player, verb);
-    }
-
-    const others = seats
-      .filter((p) => p.player_id !== game.durak_id)
-      .map((p) => p.profile?.username ?? 'unknown');
-
-    const meta = document.createElement('span');
-    meta.className = 'row__meta history__meta';
-    meta.textContent = [
-      `${seats.length} players`,
-      others.length ? `over ${others.join(', ')}` : null,
-      relativeTime(game.updated_at ?? game.created_at),
-    ].filter(Boolean).join(' · ');
-
-    const delta = document.createElement('span');
-    delta.className = 'delta history__delta';
-    if (iPlayed) {
-      paintDelta(delta, mine ?? 0);
-    } else {
-      // You were not at this table, so it did nothing to your rating.
-      delta.classList.add('delta--flat');
-      delta.textContent = 'n/a';
-      delta.title = 'You were not at this table';
-    }
-
-    li.append(who, meta, delta);
-    list.append(li);
+    recentGames.push(game);
+    list.append(historyRow(game));
   }
 }
 
-function renderPager() {
-  const pages = Math.max(1, Math.ceil(recentTotal / RECENT_PER_PAGE));
-  show($('#recent-pager'), recentTotal > RECENT_PER_PAGE);
-  setText($('#recent-page'), `Page ${recentPage + 1} of ${pages}`);
-  $('#recent-prev').disabled = recentPage <= 0;
-  $('#recent-next').disabled = recentPage >= pages - 1;
+function prependRecent(games) {
+  if (games.length === 0) return;
+  const list = $('#recent-games');
+  const before = list.scrollHeight;
+  recentGames = [...games, ...recentGames];
+  list.prepend(...games.map(historyRow));
+  if (list.scrollTop > 0) list.scrollTop += list.scrollHeight - before;
+}
+
+/** Bring every row's "3m ago" up to date. */
+function retimeRecent() {
+  for (const { time, at } of recentRows.values()) time.textContent = relativeTime(at);
+}
+
+/** The durak first, then everyone else in seat order. */
+function facesInOrder(game) {
+  const seats = game.players ?? [];
+  const durak = seats.filter((p) => p.player_id === game.durak_id);
+  const rest = seats.filter((p) => p.player_id !== game.durak_id);
+  return [...durak, ...rest];
+}
+
+function nameOf(seat) {
+  return seat?.profile?.username ?? 'unknown';
+}
+
+function historyRow(game) {
+  const me = session.user.id;
+  const seats = game.players ?? [];
+  const iPlayed = seats.some((p) => p.player_id === me);
+  const at = game.updated_at ?? game.created_at;
+
+  const li = document.createElement('li');
+  // Your own games are still marked down the left edge: green if you got out,
+  // red if you were the durak.
+  if (game.durak_id === me) li.classList.add('is-my-loss');
+  else if (iPlayed) li.classList.add('is-mine');
+
+  const faces = document.createElement('span');
+  faces.className = 'history__faces';
+  for (const seat of facesInOrder(game)) {
+    const face = avatarEl(seat.profile, { size: 'sm' });
+    if (seat.player_id === game.durak_id) face.classList.add('is-durak');
+    faces.append(face);
+  }
+
+  const when = document.createElement('time');
+  when.className = 'history__time';
+  when.dateTime = at;
+  when.textContent = relativeTime(at);
+
+  li.append(faces, when);
+  recentRows.set(game.id, { li, time: when, at });
+  li.setAttribute('aria-label', describeGame(game));
+  attachHoverCard(li, (panel) => fillGameCard(panel, game));
+  return li;
+}
+
+/** The whole row in words, for a screen reader: the faces carry no names. */
+function describeGame(game) {
+  const seats = game.players ?? [];
+  const at = relativeTime(game.updated_at ?? game.created_at);
+  if (!game.durak_id) return `Draw between ${seats.map(nameOf).join(', ')}, ${at}`;
+  const durak = seats.find((p) => p.player_id === game.durak_id);
+  const others = seats.filter((p) => p.player_id !== game.durak_id).map(nameOf);
+  const who = game.durak_id === session.user.id ? 'You were' : `${nameOf(durak)} was`;
+  return `${who} the durak, with ${others.join(', ')}, ${at}`;
+}
+
+/** "Sep 26, 9:14 PM" in the reader's own way of writing it. */
+function whenExactly(iso) {
+  return new Date(iso).toLocaleString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
+/**
+ * The panel for one finished game: who was the durak, when it ended, and a
+ * line per player with what the game did to their rating — best off at the
+ * top, the durak at the bottom in red, the way the result screen reads.
+ */
+function fillGameCard(panel, game) {
+  panel.classList.add('pcard--game');
+  const me = session.user.id;
+  const deltas = game.rating_delta ?? {};
+  const deltaOf = (seat) => {
+    const raw = deltas[seat.player_id];
+    return raw === undefined || raw === null ? null : Number(raw);
+  };
+
+  const head = document.createElement('div');
+  head.className = 'pcard__head';
+
+  const title = document.createElement('span');
+  title.className = 'pcard__title';
+  if (!game.durak_id) {
+    title.textContent = 'Draw';
+  } else {
+    const durak = (game.players ?? []).find((p) => p.player_id === game.durak_id);
+    title.textContent = game.durak_id === me
+      ? 'You were the durak'
+      : `${nameOf(durak)} was the durak`;
+  }
+
+  const when = document.createElement('span');
+  when.className = 'pcard__when';
+  when.textContent = whenExactly(game.updated_at ?? game.created_at);
+
+  head.append(title, when);
+
+  const rows = document.createElement('ul');
+  rows.className = 'pcard__results';
+
+  const ordered = [...(game.players ?? [])].sort((a, b) => {
+    const aDurak = a.player_id === game.durak_id;
+    const bDurak = b.player_id === game.durak_id;
+    if (aDurak !== bDurak) return aDurak ? 1 : -1;
+    return (deltaOf(b) ?? 0) - (deltaOf(a) ?? 0) || a.seat - b.seat;
+  });
+
+  for (const seat of ordered) {
+    const row = document.createElement('li');
+    row.className = 'pcard__result';
+    if (seat.player_id === game.durak_id) row.classList.add('is-durak');
+    if (seat.player_id === me) row.classList.add('is-me');
+
+    const name = document.createElement('span');
+    name.className = 'pcard__result-name';
+    name.textContent = nameOf(seat);
+
+    const change = document.createElement('span');
+    change.className = 'delta pcard__result-delta';
+    const delta = deltaOf(seat);
+    if (delta === null) {
+      change.classList.add('delta--flat');
+      change.textContent = '–';
+    } else {
+      paintDelta(change, delta);
+    }
+
+    row.append(avatarEl(seat.profile, { size: 'xs' }), name, change);
+    rows.append(row);
+  }
+
+  panel.append(head, rows);
 }

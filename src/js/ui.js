@@ -93,7 +93,7 @@ export function avatarEl(profile, { size = 'sm' } = {}) {
  * Called at every place a name is written rather than being baked into one
  * component, because the felt, the lobby and the leaderboard each build their
  * own. The one place it is deliberately not called is the recent-games list,
- * where every row already names the durak of that game.
+ * where the panel for a game is about who was the durak in it.
  */
 export function markStanding(el, id) {
   if (!el) return el;
@@ -117,11 +117,11 @@ export function playerEl(profile, { size = 'sm', fallback = 'unknown', card = tr
 /* ---------------- the card that follows the pointer ---------------- */
 
 /**
- * Who is that? A panel with a bigger picture, the name, the rating and how
- * their last five games went, shown while the pointer rests on a player
- * anywhere on the site.
+ * A panel shown while the pointer rests on something: a player anywhere on
+ * the site (a bigger picture, the name, the rating and how their last five
+ * games went), or a finished game in the lobby's history.
  *
- * There is one panel, moved around and refilled, rather than one per player:
+ * There is one panel, moved around and refilled, rather than one per trigger:
  * the table re-renders on every move and the leaderboard is a list, so a panel
  * per player would mean building dozens of them that are almost never seen.
  *
@@ -136,7 +136,7 @@ let cardEl_ = null;
 let cardTrigger = null;
 let cardTimer = null;
 
-function profileCard() {
+function hoverPanel() {
   if (cardEl_) return cardEl_;
 
   cardEl_ = document.createElement('div');
@@ -147,7 +147,7 @@ function profileCard() {
   document.body.append(cardEl_);
 
   // Anything that moves the page out from under the panel closes it: it is
-  // pinned to where the player was, and the player has now gone somewhere else.
+  // pinned to where the trigger was, and the trigger has now gone somewhere else.
   addEventListener('scroll', hideProfileCard, { capture: true, passive: true });
   addEventListener('resize', hideProfileCard, { passive: true });
   addEventListener('keydown', (event) => {
@@ -236,10 +236,7 @@ function paintForm(row, newestFirst) {
   row.setAttribute('aria-label', `${count}: ${shown.map((r) => FORM_WORDS[r] ?? r).join(', ')}`);
 }
 
-function fillProfileCard(profile) {
-  const el = profileCard();
-  clear(el);
-
+function fillProfileCard(el, profile) {
   el.append(avatarEl(profile, { size: 'xl' }));
 
   const body = document.createElement('div');
@@ -280,8 +277,8 @@ function fillProfileCard(profile) {
  * Put the panel beside its trigger: above by choice, below when there is no
  * room above, and always inside the window rather than half off the edge.
  */
-function placeProfileCard(trigger) {
-  const el = profileCard();
+function placeHoverPanel(trigger) {
+  const el = hoverPanel();
   const at = trigger.getBoundingClientRect();
   const gap = 10;
   const edge = 8;
@@ -300,12 +297,19 @@ function placeProfileCard(trigger) {
   el.style.top = `${Math.round(Math.max(edge, top))}px`;
 }
 
-function showProfileCard(trigger, profile) {
+/**
+ * Empty the panel, let `fill` put whatever it describes into it, and show it
+ * against `trigger`. The class is reset each time, so a fill that adds a
+ * modifier (the game panel does) never leaves it behind for the next one.
+ */
+function showHoverPanel(trigger, fill) {
   cardTrigger = trigger;
-  fillProfileCard(profile);
-  const el = profileCard();
+  const el = hoverPanel();
+  clear(el);
+  el.className = 'pcard';
+  fill(el);
   el.hidden = false;
-  placeProfileCard(trigger);
+  placeHoverPanel(trigger);
   trigger.setAttribute('aria-describedby', el.id);
 }
 
@@ -318,22 +322,23 @@ export function hideProfileCard() {
 }
 
 /**
- * Show the panel for `profile` while the pointer or the keyboard rests on
- * `el`. Does nothing for an empty seat — there is nobody to describe.
+ * Show the panel while the pointer or the keyboard rests on `el`, filled by
+ * `fill(panel)` at the moment it opens — so what it shows is read then, not
+ * when the trigger was built.
  *
- * The small delay before it opens is what stops a run down a leaderboard from
+ * The small delay before it opens is what stops a run down a list from
  * firing a panel per row on the way past.
  */
-export function attachProfileCard(el, profile) {
-  if (!el || !profile?.username) return el;
+export function attachHoverCard(el, fill) {
+  if (!el) return el;
 
   el.classList.add('has-card');
   if (!el.hasAttribute('tabindex')) el.tabIndex = 0;
 
   const open = (now = false) => {
     clearTimeout(cardTimer);
-    if (now) return showProfileCard(el, profile);
-    cardTimer = setTimeout(() => showProfileCard(el, profile), CARD_DELAY_MS);
+    if (now) return showHoverPanel(el, fill);
+    cardTimer = setTimeout(() => showHoverPanel(el, fill), CARD_DELAY_MS);
   };
   const close = () => {
     if (cardTrigger === el || cardTimer) hideProfileCard();
@@ -344,6 +349,15 @@ export function attachProfileCard(el, profile) {
   el.addEventListener('focus', () => open(true));
   el.addEventListener('blur', close);
   return el;
+}
+
+/**
+ * Show the player's panel for `profile` while the pointer or the keyboard
+ * rests on `el`. Does nothing for an empty seat — there is nobody to describe.
+ */
+export function attachProfileCard(el, profile) {
+  if (!el || !profile?.username) return el;
+  return attachHoverCard(el, (panel) => fillProfileCard(panel, profile));
 }
 
 /* ---------------- cards ---------------- */

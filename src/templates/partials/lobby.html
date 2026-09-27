@@ -1,4 +1,9 @@
 <section class="panel panel--lobby" data-route="lobby" hidden>
+  <div class="lobby__players">
+    <h2 class="heading">Players</h2>
+    <ul class="players" id="players" aria-label="Players, online first"></ul>
+  </div>
+
   <div class="lobby__tables">
     <h2 class="heading">Tables</h2>
     <ul class="tables" id="open-games"></ul>
@@ -9,13 +14,7 @@
 
   <div class="lobby__history">
     <h2 class="heading">History</h2>
-    <ul class="history" id="recent-games"></ul>
+    <ul class="history" id="recent-games" aria-label="Finished games, newest first"></ul>
     <p class="empty" id="no-history" hidden>None</p>
-
-    <nav class="pager" id="recent-pager" aria-label="Recent games" hidden>
-      <button type="button" class="btn btn--quiet" id="recent-prev">&lsaquo; Newer</button>
-      <span class="pager__count" id="recent-page" aria-live="polite"></span>
-      <button type="button" class="btn btn--quiet" id="recent-next">Older &rsaquo;</button>
-    </nav>
   </div>
 </section>
