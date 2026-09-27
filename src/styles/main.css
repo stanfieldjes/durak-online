@@ -386,6 +386,10 @@ body {
 .pcard__result.is-me .pcard__result-name { font-weight: 600; }
 .pcard__result.is-durak { padding-top: 0.3rem; border-top: 1px solid var(--rail-line); }
 .pcard__result.is-durak .pcard__result-name { color: var(--score-down); }
+/* The durak's name and loss in bold: the line the panel is about, and the
+   dark red reads more easily at a heavier weight. */
+.pcard__result.is-durak .pcard__result-name,
+.pcard__result.is-durak .pcard__result-delta { font-weight: 700; }
 
 /* The hover target itself. Focusable, so the panel is reachable by keyboard
    as well, and marked so it is clear there is something to rest on. */
@@ -968,8 +972,32 @@ a.btn { display: inline-block; text-decoration: none; }
      it too, on their own, and the two together moved the list twice; Safari
      does not do it at all. One way that behaves the same everywhere. */
   overflow-anchor: none;
-  scrollbar-width: thin;
-  scrollbar-color: var(--rail-line) transparent;
+}
+
+/*
+  The scrollbar, drawn so it can be seen: a light handle on a darker track,
+  always there rather than only while scrolling, so it is plain from the
+  start that there are more games below.
+
+  Chrome, Edge and Safari take the ::-webkit-scrollbar rules, which also keep
+  it on screen on a Mac set to hide scrollbars. They must not be given
+  scrollbar-color or scrollbar-width as well: Chrome drops these rules the
+  moment either is set. Firefox reads only those two, so it gets them on its
+  own below.
+*/
+.history::-webkit-scrollbar { width: 10px; }
+.history::-webkit-scrollbar-track { background: rgba(0, 0, 0, 0.35); }
+.history::-webkit-scrollbar-thumb {
+  background: rgba(143, 168, 154, 0.85);   /* --chalk-rail */
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background-clip: padding-box;
+  min-height: 2.5rem;
+}
+.history::-webkit-scrollbar-thumb:hover { background-color: var(--chalk-rail); }
+
+@supports (-moz-appearance: none) {
+  .history { scrollbar-width: thin; scrollbar-color: rgba(143, 168, 154, 0.85) rgba(0, 0, 0, 0.35); }
 }
 
 .history li { height: var(--history-row); padding-block: 0; flex-shrink: 0; }
