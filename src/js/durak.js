@@ -18,10 +18,12 @@
  *   - Defender takes and no more cards can go down: nobody has to press Done;
  *     the table waits on the same delayed `clear`, and Done skips it.
  *
- * When the table cannot take another card (six down, or nothing more the
- * defender could receive) there is nothing to wait for: the pause is a short
- * look at the cards rather than a chance to throw in, and there is no Done.
- * See isQuickClear().
+ * When the table cannot take another card there is nothing to wait for: the
+ * pause is a short look at the cards rather than a chance to throw in, and
+ * there is no Done. That is six down, or nothing more the defender could
+ * receive, or every card of every rank on the table already lying on it —
+ * four of one rank beaten by four of another, say — so that nobody can hold
+ * a card to throw in. See nothingMoreFits() and isQuickClear().
  *
  * An attacker with an empty hand counts as done without pressing anything,
  * but can still press Done to skip a pause. A pause is only ever skipped by
@@ -58,7 +60,7 @@ export const RED_SUITS = ['H', 'D'];
 /** How many reshuffles to try for that before dealing what comes up. */
 const DEAL_ATTEMPTS = 200;
 
-export const SUIT_GLYPH = { S: '\u2660', H: '\u2665', D: '\u2666', C: '\u2663' };
+export const SUIT_GLYPH = { S: '♠', H: '♥', D: '♦', C: '♣' };
 export const SUIT_NAME = { S: 'spades', H: 'hearts', D: 'diamonds', C: 'clubs' };
 
 export class IllegalMove extends Error {}
@@ -269,6 +271,36 @@ export function attackCapacity(state) {
 }
 
 /**
+ * Is every card of every rank on the table lying on it?
+ *
+ * A throw-in has to match a rank already down, and a rank has only four
+ * cards. Once all four of each rank showing are on the table — four sevens
+ * beaten by four jacks, say — nobody can be holding a card that could go
+ * down. Read off the table alone, which everyone can see, so it tells nobody
+ * anything about anyone's hand.
+ */
+export function ranksExhausted(state) {
+  if (state.table.length === 0) return false;
+  const counts = new Map();
+  for (const slot of state.table) {
+    for (const card of [slot.atk, slot.def]) {
+      if (card) counts.set(card.r, (counts.get(card.r) ?? 0) + 1);
+    }
+  }
+  for (const count of counts.values()) if (count < SUITS.length) return false;
+  return true;
+}
+
+/**
+ * Can no more cards possibly go down this round? Either there is no room for
+ * another (attackCapacity), or there is room but no card anywhere that could
+ * fill it (ranksExhausted).
+ */
+export function nothingMoreFits(state) {
+  return attackCapacity(state) <= 0 || ranksExhausted(state);
+}
+
+/**
  * Cards `seat` may put down right now.
  * The opening card of a round belongs to the primary attacker; after that
  * every attacker competes freely for the remaining slots.
@@ -311,26 +343,27 @@ export function canPass(state, seat) {
  * Is the table ready to be cleared without anyone deciding anything?
  *
  * True when every attack is beaten, or when the defender is taking and no
- * more cards fit. Not a player's choice: browsers submit it on a timer (see
- * game.js), so the last card played stays visible for a moment first. Any
- * seat still in the game may submit it, and the version check guarantees it
- * applies once however many browsers try.
+ * more cards can go down. Not a player's choice: browsers submit it on a
+ * timer (see game.js), so the last card played stays visible for a moment
+ * first. Any seat still in the game may submit it, and the version check
+ * guarantees it applies once however many browsers try.
  */
 export function canClear(state, seat) {
   if (state.finished || state.table.length === 0) return false;
   if (seat !== undefined && (!Number.isInteger(seat) || state.out[seat])) return false;
-  if (state.taking) return attackCapacity(state) <= 0;
+  if (state.taking) return nothingMoreFits(state);
   return openSlots(state) === 0;
 }
 
 /**
- * A table waiting to clear that cannot take another card: six down, or the
- * defender has nothing left to answer with. Nobody can throw in, so the pause
- * only needs to be long enough to see the cards. submit_move() uses the same
- * test to pick which delay to hold a clear to.
+ * A table waiting to clear that cannot take another card: six down, the
+ * defender has nothing left to answer with, or every card of the ranks on it
+ * is already there. Nobody can throw in, so the pause only needs to be long
+ * enough to see the cards. submit_move() uses the same test to pick which
+ * delay to hold a clear to.
  */
 export function isQuickClear(state) {
-  return canClear(state) && attackCapacity(state) <= 0;
+  return canClear(state) && nothingMoreFits(state);
 }
 
 export function canTake(state, seat) {
@@ -721,7 +754,7 @@ export function describe(state, seat) {
   }
   if (state.out[seat]) return 'You are out of cards. Waiting for the rest.';
 
-  const full = attackCapacity(state) <= 0;
+  const full = nothingMoreFits(state);
 
   if (seat === state.defender) {
     if (state.taking) {
@@ -743,14 +776,14 @@ export function describe(state, seat) {
   const canThrow = legalAttacks(state, seat).length > 0;
   const done = state.passed[seat];
   if (state.taking) {
-    if (full) return 'They are taking. No room for more cards.';
+    if (full) return 'They are taking. Nothing more can go down.';
     if (done || state.hands[seat].length === 0) return 'They are taking. Waiting for the other attackers.';
     return canThrow
       ? 'They are taking — throw in anything that matches, then press Done.'
       : 'They are taking. Press Done when you are finished.';
   }
   if (openSlots(state) === 0) {
-    if (full) return 'All beaten. No room for more cards.';
+    if (full) return 'All beaten. Nothing more can go down.';
     if (done) return 'All beaten. Waiting for the other attackers, or the table clears in a moment.';
     return canThrow
       ? 'All beaten. Throw in a matching rank, or press Done to clear the table.'

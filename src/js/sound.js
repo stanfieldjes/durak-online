@@ -11,6 +11,10 @@
  *
  * Nothing is fetched, decoded, or played until a table is on screen — sound
  * belongs to the game and nowhere else.
+ *
+ * Every table starts muted. Muting is separate from the volume: the level a
+ * player last set is remembered, and unmuting (the speaker button beside the
+ * slider, or moving the slider itself) brings sound back at that level.
  */
 import { CONFIG } from './config.js';
 
@@ -34,6 +38,7 @@ let buffers = new Map(); // name -> AudioBuffer
 let loading = false;
 let active = false;      // true only while a table is on screen
 let volume = readVolume();
+let muted = true;        // every table starts silent; see setSoundActive
 
 function readVolume() {
   try {
@@ -46,15 +51,26 @@ function readVolume() {
   }
 }
 
+/** What actually reaches the speakers: nothing while muted, else the level. */
+const audible = () => (muted ? 0 : volume);
+
 function ensureContext() {
   if (context) return context;
   const Ctor = window.AudioContext || window.webkitAudioContext;
   if (!Ctor) return null;
   context = new Ctor();
   master = context.createGain();
-  master.gain.value = volume;
+  master.gain.value = audible();
   master.connect(context.destination);
   return context;
+}
+
+/** Move the master gain to what should be heard now, ramped so it never clicks. */
+function applyGain() {
+  if (!master || !context) return;
+  const now = context.currentTime;
+  master.gain.cancelScheduledValues(now);
+  master.gain.setTargetAtTime(audible(), now, 0.015);
 }
 
 /**
@@ -112,9 +128,15 @@ function stopWaitingForGesture() {
 /** Nothing here touches audio; the context is only built once a game starts. */
 export function initSound() {}
 
+/**
+ * A table has come on screen (true) or gone (false). Arriving at a table
+ * always mutes: the clips are still loaded, so unmuting is instant.
+ */
 export function setSoundActive(value) {
   active = Boolean(value);
   if (active) {
+    muted = true;
+    applyGain();
     load();
     resume();
     startWaitingForGesture();
@@ -124,7 +146,7 @@ export function setSoundActive(value) {
 }
 
 export function play(name) {
-  if (!active || volume <= 0) return;
+  if (!active || muted || volume <= 0) return;
   const buffer = buffers.get(name);
   if (!buffer || !context || !master) return;
   if (context.state === 'suspended') resume();
@@ -150,23 +172,41 @@ export function play(name) {
 
 /* ---------------- volume ---------------- */
 
+/** The level the slider is set to, whether or not sound is muted. */
 export function getVolume() {
   return volume;
 }
 
-/** @param {number} value 0 (silent) to 1 (full) */
+/**
+ * Set the level. Moving the slider off zero is an obvious wish to hear
+ * something, so it unmutes as well.
+ *
+ * @param {number} value 0 (silent) to 1 (full)
+ */
 export function setVolume(value) {
   volume = Math.min(1, Math.max(0, Number(value) || 0));
-  if (master && context) {
-    // Ramp rather than jump, so dragging the slider does not click and pop.
-    const now = context.currentTime;
-    master.gain.cancelScheduledValues(now);
-    master.gain.setTargetAtTime(volume, now, 0.015);
-  }
+  if (volume > 0) muted = false;
+  applyGain();
   try {
     localStorage.setItem(STORAGE_KEY, String(volume));
   } catch {
     /* preference just will not persist */
   }
   return volume;
+}
+
+export function isMuted() {
+  return muted;
+}
+
+/**
+ * Mute, or unmute at the remembered level. Unmuting a slider left at zero
+ * brings it back to the default level, or there would be nothing to hear.
+ */
+export function setMuted(value) {
+  muted = Boolean(value);
+  if (!muted && volume <= 0) setVolume(DEFAULT_VOLUME);
+  resume(); // a click on the button is the gesture a suspended context needs
+  applyGain();
+  return muted;
 }

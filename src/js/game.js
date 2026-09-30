@@ -54,7 +54,9 @@ import {
   REVEAL_PAUSE_MS,
   TRUMP_SLIDE_MS,
 } from './fx.js';
-import { play as playSound, getVolume, setVolume, setSoundActive } from './sound.js';
+import {
+  play as playSound, getVolume, setVolume, setSoundActive, isMuted, setMuted,
+} from './sound.js';
 import { initTableSize, tableShown, tableHidden } from './tablesize.js';
 import {
   $, show, setText, clear, toast, cardEl, avatarEl, paintRating, paintDelta,
@@ -69,8 +71,9 @@ import { forgetForm } from './form.js';
  *
  * Two delays. The long one is for a beaten table that could still take more
  * cards: attackers can throw in while it shows. The short one is for a table
- * that cannot (six down, or a defender with nothing left to answer with),
- * where the pause is only a look at the cards.
+ * that cannot (six down, a defender with nothing left to answer with, or
+ * every card of the ranks on it already down), where the pause is only a
+ * look at the cards.
  *
  * Both live on the games row (clear_delay_ms, quick_clear_delay_ms), and
  * submit_move() refuses a clear that comes sooner, so a stale or modified page
@@ -190,30 +193,56 @@ export function initGame() {
   $('#result-again').addEventListener('click', () => { location.hash = '#/'; });
 
   const slider = $('#act-volume');
-  const icon = $('#volume-icon');
-  const paintVolume = () => {
-    const level = getVolume();
-    slider.value = String(Math.round(level * 100));
-    // The track fills up to the handle, which needs the current value as a
-    // percentage since CSS cannot read an input's value on its own.
-    slider.style.setProperty('--fill', `${Math.round(level * 100)}%`);
-    icon.textContent = level === 0 ? '✕' : '♪';
-    icon.classList.toggle('is-silent', level === 0);
-  };
   slider.addEventListener('input', () => {
-    setVolume(Number(slider.value) / 100);
+    setVolume(Number(slider.value) / 100); // off zero also unmutes
     paintVolume();
   });
   // A card sound on release gives an immediate sense of the new level.
   slider.addEventListener('change', () => playSound('play'));
+
+  // The speaker beside the slider mutes and unmutes. Unmuting comes back at
+  // the level last set, with a card sound so it is plain that it worked.
+  $('#volume-toggle').addEventListener('click', () => {
+    setMuted(!isSilent());
+    paintVolume();
+    if (!isSilent()) playSound('play');
+  });
   paintVolume();
 
   initChat();
 }
 
+/** Nothing would be heard: muted, or the slider pulled all the way down. */
+const isSilent = () => isMuted() || getVolume() === 0;
+
+/**
+ * Draw the volume control as it stands. While muted the slider sits at zero,
+ * which is what is being heard; the level itself is kept, and comes back on
+ * unmuting.
+ */
+function paintVolume() {
+  const slider = $('#act-volume');
+  const toggle = $('#volume-toggle');
+  if (!slider || !toggle) return;
+
+  const silent = isSilent();
+  const level = silent ? 0 : getVolume();
+  slider.value = String(Math.round(level * 100));
+  // The track fills up to the handle, which needs the current value as a
+  // percentage since CSS cannot read an input's value on its own.
+  slider.style.setProperty('--fill', `${Math.round(level * 100)}%`);
+
+  toggle.textContent = silent ? '✕' : '♪';
+  toggle.classList.toggle('is-silent', silent);
+  toggle.setAttribute('aria-pressed', String(silent));
+  toggle.title = silent ? 'Sound off. Click to turn it on.' : 'Sound on. Click to mute.';
+}
+
 export async function enterGame(gameId) {
   reset();
+  // Every table starts muted.
   setSoundActive(true);
+  paintVolume();
 
   try {
     game = await getGame(gameId);

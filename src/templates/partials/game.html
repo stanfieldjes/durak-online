@@ -18,12 +18,16 @@
   <div class="felt" id="felt" hidden>
     <div class="felt__bar">
       <span class="felt__bar-right">
-        <label class="volume" for="act-volume">
-          <span class="volume__icon" id="volume-icon" aria-hidden="true">&#9834;</span>
+        <!-- Every table starts muted. The button mutes and unmutes; the
+             slider sets the level, and moving it off zero unmutes too. -->
+        <div class="volume">
+          <button type="button" class="volume__icon is-silent" id="volume-toggle"
+                  aria-label="Mute" aria-pressed="true"
+                  title="Sound off. Click to turn it on.">&#10005;</button>
           <input type="range" id="act-volume" class="volume__slider"
-                 min="0" max="100" step="1" value="70"
+                 min="0" max="100" step="1" value="0"
                  aria-label="Sound volume">
-        </label>
+        </div>
         <button type="button" class="btn btn--quiet btn--corner" id="act-leave">Leave</button>
       </span>
     </div>

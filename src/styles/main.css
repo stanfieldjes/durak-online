@@ -1192,14 +1192,25 @@ a.btn { display: inline-block; text-decoration: none; }
   background: rgba(0, 0, 0, 0.22);
 }
 
+/* The mute button: a note while sound is on, a cross while it is off. Every
+   table starts on the cross. A button rather than a label, so it gets a
+   pointer, a focus ring and a target a finger can hit. */
 .volume__icon {
+  font: inherit;
   font-size: var(--step--1);
   color: rgba(255, 255, 255, 0.7);
-  width: 1ch;
+  background: none;
+  border: 0;
+  border-radius: 999px;
+  min-width: 1.6em;
+  padding: 0.15rem 0.2rem;
+  margin: -0.15rem 0 -0.15rem -0.25rem;
   text-align: center;
   line-height: 1;
+  cursor: pointer;
 }
 
+.volume__icon:hover { color: #fff; }
 .volume__icon.is-silent { color: var(--red-soft); }
 
 .volume__slider {
@@ -1642,9 +1653,14 @@ a.btn { display: inline-block; text-decoration: none; }
 .card--trump::after {
   content: '';
   position: absolute;
-  inset: 0;
+  /* Laid over the card's 1px border rather than inside it. Inside, the ring
+     had the card's outer corner radius but sat within the border's smaller
+     inner curve, and a sliver of the card showed through at each corner.
+     Over the border, both curves are the same one. The extra 1px keeps the
+     ring as thick as it was. */
+  inset: -1px;
   border-radius: inherit;
-  box-shadow: inset 0 0 0 calc(var(--card-w) * 0.035) currentColor;
+  box-shadow: inset 0 0 0 calc(var(--card-w) * 0.035 + 1px) currentColor;
   pointer-events: none;
 }
 
