@@ -9,6 +9,8 @@ import {
   openSlots,
   isQuickClear,
   describe,
+  suddenDeathLabel,
+  activeSeats,
   roleOf,
   sameCard,
   cardId,
@@ -590,12 +592,41 @@ function present(previous, next, { quiet = false } = {}) {
   } else {
     const events = takeNewEvents(next);
     if (events.length) playEventSounds(events);
-    if (previous && next) flights = planMoves(previous, next);
+    const tie = events.find((e) => e.t === 'sudden-death');
+    if (tie) announceSuddenDeath(tie);
+    if (previous && next) {
+      // A sudden-death deal swaps every hand for new cards at once, which
+      // planMoves() has no journey for: it is drawn as a deal of its own.
+      flights = suddenRound(next) > suddenRound(previous)
+        ? planSuddenDeath(previous, next)
+        : planMoves(previous, next);
+    }
   }
 
   state = next;
   render();
   for (const flight of flights) fly(flight);
+}
+
+/** How many sudden-death rounds a position has been through; 0 for none. */
+const suddenRound = (s) => s?.suddenDeath ?? 0;
+
+/** Names in a list: "Anna", "Anna and Boris", "Anna, Boris and Clara". */
+function joinNames(seats) {
+  const names = seats.map(nameAt);
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`;
+}
+
+/** Tell the table a tie is being played off, and who is playing it. */
+function announceSuddenDeath(event) {
+  playSound('start');
+  const who = joinNames(event.seats ?? []);
+  toast(
+    event.round > 1
+      ? `Tied again. Sudden death, round ${event.round}: ${who}, six new cards each.`
+      : `Nobody was left holding cards. Sudden death: ${who}, six new cards each, no stock.`
+  );
 }
 
 /**
@@ -779,6 +810,85 @@ function planDeal(next) {
       k++;
     }
   }
+  return flights;
+}
+
+/**
+ * The tie that started sudden death: the last round's cards go to the beaten
+ * pile, then six new cards each are dealt from where the stock was to the
+ * players still in, round by round, starting with you if you are one of them.
+ *
+ * The new deck holds cards with the same names as the old one, so a card
+ * leaving the table and a card being dealt can share an id. The flights are
+ * keyed apart for that reason, and the ones leaving the table only ever touch
+ * the beaten pile's count, never `landing`, which belongs to the deal.
+ */
+function planSuddenDeath(previous, next) {
+  if (reducedMotion()) return [];
+  const trump = shownTrump(next);
+  const flights = [];
+
+  const leaving = previous.table.flatMap((slot) => (slot.def ? [slot.atk, slot.def] : [slot.atk]));
+  let tableEmptyAt = 0;
+  leaving.forEach((card, i) => {
+    const id = cardId(card);
+    const delay = i * CLEAR_GAP_MS;
+    tableEmptyAt = Math.max(tableEmptyAt, delay + FLIGHT_MS.discard);
+    discarding.add(id);
+    const done = () => {
+      discarding.delete(id);
+      refreshQuietParts();
+    };
+    flights.push({
+      key: `discard:${id}`,
+      from: boxOf(tableCardEl(id)),
+      to: () => boxOf($('#discard .pile')),
+      face: cardEl(card, { trump }),
+      flip: 'down',
+      duration: FLIGHT_MS.discard,
+      delay,
+      lift: 10,
+      onLand: done,
+      onCancel: done,
+    });
+  });
+
+  const seats = activeSeats(next);
+  const first = Math.max(0, seats.indexOf(mySeat));
+  const order = [...seats.slice(first), ...seats.slice(0, first)];
+  const gap = Math.min(DEAL_GAP_MS, Math.round(DEAL_TOTAL_MS / (seats.length * HAND_SIZE)));
+  const pause = tableEmptyAt > 0 ? tableEmptyAt + 200 : 0;
+
+  let k = 0;
+  for (let round = 0; round < HAND_SIZE; round++) {
+    for (const seat of order) {
+      const card = next.hands[seat][round];
+      if (!card) continue;
+      const id = cardId(card);
+      const mine = seat === mySeat;
+      markArriving(id);
+      dealt.add(id);
+      flights.push({
+        key: `deal:${id}`,
+        from: stockTopBox,
+        to: handTarget(seat),
+        face: mine ? cardEl(card, { trump }) : null,
+        flip: mine ? 'up' : null,
+        duration: FLIGHT_MS.draw,
+        delay: pause + k * gap,
+        lift: 12,
+        onLand: (box) => landed(id, box),
+        onCancel: () => {
+          dealt.delete(id);
+          refreshQuietParts();
+        },
+      });
+      k++;
+    }
+  }
+
+  // Nobody plays until the last card is in; landed() calls finishDeal().
+  dealing = k > 0;
   return flights;
 }
 
@@ -1134,9 +1244,9 @@ async function drain() {
  * Settle the game.
  *
  * The scoreboard is held back for a moment so the last exchange stays on
- * screen. That matters most when the defender beats the final attack and
- * empties their hand: the draw is something to watch, not something to be told
- * about after the fact.
+ * screen. That matters most when the game is decided on the last card: the
+ * finish is something to watch, not something to be told about after the
+ * fact.
  */
 async function maybeSettle() {
   const over = state?.finished || game?.status === 'finished';
@@ -1155,7 +1265,8 @@ async function maybeSettle() {
   // playing settles it; we just wait for the row to say so.
   if (!spectating && game.status !== 'finished' && state?.finished) {
     try {
-      await finishGame(game.id, state.draw ? -1 : state.durak);
+      // Every game has a durak now: a tie went to sudden death instead.
+      await finishGame(game.id, state.durak);
     } catch (error) {
       if (!/not in progress|already/i.test(error?.message ?? '')) console.warn(error);
     }
@@ -1702,7 +1813,7 @@ const PROMPT_TONES = ['is-dealing', 'is-waiting', 'is-attacking', 'is-defending'
 
 function renderPrompt() {
   const el = $('#prompt');
-  setText(el, dealing ? 'Dealing…' : spectating ? watchingText() : describe(state, mySeat));
+  setText(el, dealing ? dealingText() : spectating ? watchingText() : seatText());
   el.classList.remove(...PROMPT_TONES);
   el.classList.add(promptTone());
 
@@ -1719,12 +1830,29 @@ function renderPrompt() {
   el.classList.toggle('is-clearing', counting);
 }
 
+function dealingText() {
+  return suddenRound(state) ? `${suddenDeathLabel(state)}. Dealing…` : 'Dealing…';
+}
+
+/** What the table wants from you. Out of a sudden death, it names who is in it. */
+function seatText() {
+  if (suddenRound(state) && !state.finished && state.out[mySeat]) {
+    return `You got out. ${suddenDeathLabel(state)}: ${joinNames(activeSeats(state))}.`;
+  }
+  return describe(state, mySeat);
+}
+
 /** What the table is doing, told from the stands rather than from a seat. */
 function watchingText() {
   if (state.finished) {
     if (state.draw) return 'Draw. Nobody is the fool.';
     return `${nameAt(state.durak)} is the durak.`;
   }
+  const text = watchingRound();
+  return suddenRound(state) ? `${suddenDeathLabel(state)}. ${text}` : text;
+}
+
+function watchingRound() {
   const defender = nameAt(state.defender);
   if (state.taking) return `${defender} is taking the cards.`;
   if (state.table.length === 0) return `${nameAt(state.attacker)} leads.`;
@@ -1803,15 +1931,24 @@ async function showResult() {
   const noDurak = decided ? state.draw || state.durak === null : !game.durak_id;
   const mySeatLost = decided ? state.durak === mySeat : game.durak_id === session.user.id;
 
+  // Settled in sudden death, and who was still playing when it was.
+  const sudden = decided && suddenRound(state) > 0;
+  const lastTie = sudden ? state.log.findLast((e) => e.t === 'sudden-death') : null;
+  const inSuddenDeath = Boolean(lastTie?.seats?.includes(mySeat));
+
   let title;
   if (conceded && game.durak_id && game.durak_id !== session.user.id) {
     title = `${nameAt(durakSeat)} left the game.`;
   } else if (noDurak) {
     title = 'Draw.';
   } else if (spectating) {
-    title = `${nameAt(durakSeat)} is the durak.`;
+    title = sudden
+      ? `${nameAt(durakSeat)} is the durak, in sudden death.`
+      : `${nameAt(durakSeat)} is the durak.`;
   } else if (mySeatLost) {
-    title = 'You are the durak.';
+    title = sudden ? 'You are the durak, in sudden death.' : 'You are the durak.';
+  } else if (inSuddenDeath) {
+    title = 'You survived sudden death.';
   } else {
     title = 'You got out.';
   }

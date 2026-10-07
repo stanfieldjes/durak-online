@@ -38,6 +38,14 @@ alter table public.profiles add column if not exists avatar_url text;
 alter table public.profiles
   add column if not exists rating numeric(12,6) not null default public.rating_start();
 
+-- The last time a browser of this player's said it was open: moved to now
+-- about once a minute by touch_last_seen() while the site is up in front of
+-- them. Whether they are online at this moment is Realtime Presence's job,
+-- not this column's; this is what is left when they go, for the lobby's
+-- "last online". NULL for anybody not seen since it was added — the players
+-- view below fills that gap.
+alter table public.profiles add column if not exists last_seen_at timestamptz;
+
 -- The old percentage-point score kept a running sum of each game's 1/n. The
 -- rating replaces it outright and derives nothing from it, so it goes.
 --
@@ -391,6 +399,38 @@ with (security_invoker = on) as
   where wins + losses + draws > 0
   order by rating desc, games desc, username;
 
+-- ----------------------------------------------------------------- players --
+
+-- Everybody, for the lobby's Players section: the profile, and the last time
+-- they were on the site.
+--
+-- last_seen_at is the column when there is one. For a player not seen since
+-- it was added it cannot be known exactly, so it falls back to the last thing
+-- that is: the end of their most recent finished game, or failing that the
+-- moment they signed up. Taken as the latest of the three rather than the
+-- first that exists, so a stale value can never hide a newer one. The
+-- fallback only ever applies until they next open the site.
+drop view if exists public.players;
+create view public.players
+with (security_invoker = on) as
+  select
+    p.id,
+    p.username,
+    p.avatar_url,
+    p.rating,
+    p.wins,
+    p.losses,
+    p.draws,
+    greatest(
+      p.last_seen_at,
+      p.created_at,
+      (select max(g.updated_at)
+         from public.game_players gp
+         join public.games g on g.id = gp.game_id
+        where gp.player_id = p.id and g.status = 'finished')
+    ) as last_seen_at
+  from public.profiles p;
+
 -- --------------------------------------------------------------- functions --
 
 -- ------------------------------------------------------------ lobby nudge --
@@ -470,6 +510,19 @@ begin
   end if;
   return row;
 end;
+$$;
+
+-- ------------------------------------------------------------- last seen --
+
+-- Say you are on the site right now. Called by an open page about once a
+-- minute (src/js/presence.js), and once more as it is put away. Takes no
+-- arguments: the time is the database's, and the player is whoever is
+-- signed in, so the only thing a caller can do with it is be seen.
+create or replace function public.touch_last_seen()
+returns void
+language sql security definer set search_path = public
+as $$
+  update profiles set last_seen_at = now() where id = auth.uid();
 $$;
 
 -- ------------------------------------------------------------ create_game --
@@ -642,6 +695,7 @@ declare
   log_len   int;
   open_len  int;
   room      int;
+  exhausted boolean;
   delay_ms  int;
 begin
   if me is null then
@@ -689,15 +743,26 @@ begin
     raise exception 'the deal cannot change mid-game';
   end if;
 
+  -- There are no draws: a tie is played off in sudden death (startSuddenDeath()
+  -- in durak.js). A page still running the old engine would end such a game
+  -- as a draw, which finish_game() would then refuse, leaving the table stuck
+  -- as active. Turn it away here instead, so that player reloads and replays
+  -- the move on the new engine.
+  if coalesce((p_state->>'draw')::boolean, false) then
+    raise exception 'draws were replaced by sudden death — reload the page';
+  end if;
+
   -- A clear (the table emptying itself after a round) must wait until the
   -- position has been on show long enough. updated_at is when that position
   -- was written, so one slow or modified browser cannot cut the pause short
   -- for everyone. The engine marks a clear by making {"t":"clear"} the first
   -- new log entry.
   --
-  -- If the table cannot take another card (six down, or the defender has
-  -- nothing left to answer with) nobody can throw in, so only the short
-  -- quick_clear_delay_ms applies. Mirrors isQuickClear() in durak.js.
+  -- If the table cannot take another card nobody can throw in, so only the
+  -- short quick_clear_delay_ms applies. That is six down, or the defender has
+  -- nothing left to answer with, or every card of every rank on the table is
+  -- already on it (four of one rank beaten by four of another, say), so that
+  -- nobody can be holding one. Mirrors nothingMoreFits() in durak.js.
   log_len := coalesce(jsonb_array_length(row.state->'log'), 0);
   if p_state->'log'->log_len->>'t' = 'clear' then
     select count(*) into open_len
@@ -712,7 +777,17 @@ begin
         coalesce(jsonb_array_length(row.state->'hands'->defender), 0) - open_len
       )
     end;
-    delay_ms := case when room <= 0 then row.quick_clear_delay_ms else row.clear_delay_ms end;
+    -- Every rank showing has all four of its cards on the table. Read from the
+    -- table alone, which everyone can see. A deck has four suits of each rank.
+    select coalesce(bool_and(n = 4), false) into exhausted
+      from (
+        select card->>'r' as r, count(*) as n
+          from jsonb_array_elements(row.state->'table') slot,
+               lateral (values (slot->'atk'), (slot->'def')) as c(card)
+         where jsonb_typeof(card) = 'object'
+         group by card->>'r'
+      ) ranks;
+    delay_ms := case when room <= 0 or exhausted then row.quick_clear_delay_ms else row.clear_delay_ms end;
     if now() < row.updated_at + delay_ms * interval '1 millisecond' then
       raise exception 'too early to clear the table';
     end if;
@@ -729,9 +804,13 @@ $$;
 
 -- Settle the game and move everyone's rating.
 --
--- p_durak_seat is the seat of the fool, or -1 for a draw. You may only name
+-- p_durak_seat is the seat of the fool. Every game has one: a tie is played
+-- off in sudden death rather than settled as a draw. You may only name
 -- someone else the durak if the stored position agrees; naming yourself is
 -- always allowed, which is how conceding works.
+--
+-- Draws before sudden death stay on the record as they were: profiles.draws
+-- keeps counting them, and rating_changes() still knows how to score one.
 --
 -- The ratings at the table decide what the result was worth, and
 -- public.rating_changes() turns that into one change per seat. The changes
@@ -748,7 +827,6 @@ declare
   my_seat     int;
   n           int;
   finished    boolean;
-  is_draw     boolean;
   claimed     int;
   seats       int[];
   ids         uuid[];
@@ -774,6 +852,10 @@ begin
     raise exception 'this game is not in progress';
   end if;
 
+  if p_durak_seat is null or p_durak_seat < 0 then
+    raise exception 'every game has a durak — a tie is played off in sudden death';
+  end if;
+
   select seat into my_seat from game_players
    where game_id = p_game and player_id = me;
   if my_seat is null then
@@ -781,17 +863,14 @@ begin
   end if;
 
   finished := coalesce((row.state->>'finished')::boolean, false);
-  is_draw  := coalesce((row.state->>'draw')::boolean, false);
 
   if finished then
-    claimed := case when is_draw then -1 else (row.state->>'durak')::int end;
+    claimed := (row.state->>'durak')::int;
     if claimed is distinct from p_durak_seat then
       raise exception 'that is not the result of this game';
     end if;
   elsif p_durak_seat <> my_seat then
     raise exception 'you can only concede on your own behalf';
-  else
-    is_draw := false;                   -- a concession is not a draw
   end if;
 
   -- Seat order throughout, so index i in every array is the same player.
@@ -816,22 +895,20 @@ begin
     from profiles p
    where p.id = any(ids);
 
-  if p_durak_seat <> -1 then
-    for i in 1..n loop
-      if seats[i] = p_durak_seat then
-        durak_index := i;
-        durak_uuid := ids[i];
-      end if;
-    end loop;
+  for i in 1..n loop
+    if seats[i] = p_durak_seat then
+      durak_index := i;
+      durak_uuid := ids[i];
+    end if;
+  end loop;
+  if durak_index is null then
+    raise exception 'nobody is sitting in that seat';
   end if;
 
   deltas := public.rating_changes(ratings, durak_index);
 
   for i in 1..n loop
-    if p_durak_seat = -1 then
-      update profiles set draws = draws + 1, rating = rating + deltas[i]
-       where id = ids[i];
-    elsif seats[i] = p_durak_seat then
+    if seats[i] = p_durak_seat then
       update profiles set losses = losses + 1, rating = rating + deltas[i]
        where id = ids[i];
     else
@@ -1029,6 +1106,7 @@ revoke all on function public.leave_table(uuid)                   from public;
 revoke all on function public.set_username(text)                  from public;
 revoke all on function public.set_avatar(text)                    from public;
 revoke all on function public.send_message(uuid, text)            from public;
+revoke all on function public.touch_last_seen()                   from public;
 
 grant execute on function public.create_game(int)                 to authenticated;
 grant execute on function public.join_game(uuid, jsonb)           to authenticated;
@@ -1040,6 +1118,7 @@ grant execute on function public.leave_table(uuid)                to authenticat
 grant execute on function public.set_username(text)               to authenticated;
 grant execute on function public.set_avatar(text)                 to authenticated;
 grant execute on function public.send_message(uuid, text)         to authenticated;
+grant execute on function public.touch_last_seen()                to authenticated;
 
 -- --------------------------------------------------------------- avatars --
 

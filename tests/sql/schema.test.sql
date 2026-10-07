@@ -273,6 +273,73 @@ begin
 end
 $$;
 
+\echo '== no draws: ties go to sudden death =='
+
+do $$
+declare
+  a     uuid := test_player('sd_one');
+  b     uuid := test_player('sd_two');
+  g     uuid;
+  deal  jsonb;
+  row   public.games;
+  rating_a numeric;
+begin
+  perform test_become(a);
+  row := public.create_game(2);
+  g := row.id;
+  -- What submit_move() holds fixed for the whole game.
+  deal := jsonb_build_object('seed', row.seed, 'trump', 'H', 'playerCount', 2);
+  insert into public.game_players (game_id, seat, player_id) values (g, 1, b);
+  update public.games
+     set status = 'active', version = 4,
+         state = deal || '{"version": 4, "attacker": 0, "defender": 1, "table": [],
+                           "out": [false, false], "log": [],
+                           "finished": false, "draw": false}'::jsonb
+   where id = g;
+  select rating into rating_a from public.profiles where id = a;
+
+  -- A page still on the old engine ends a tie as a draw.
+  perform ok('submit_move turns away a drawn position',
+    raises(format('select public.submit_move(%L, %L::jsonb, 4)', g,
+      deal || '{"version": 5, "attacker": 0, "defender": 1, "table": [],
+                "out": [true, true], "log": [],
+                "finished": true, "draw": true, "durak": null}'::jsonb)));
+  perform ok('the position did not move',
+    (select version from public.games where id = g) = 4);
+
+  -- The new engine's sudden-death deal goes through like any other move.
+  row := public.submit_move(g,
+    deal || '{"version": 5, "attacker": 1, "defender": 0, "table": [],
+              "out": [false, false],
+              "log": [{"t": "sudden-death", "round": 1, "seats": [0, 1]}],
+              "finished": false, "draw": false, "suddenDeath": 1}'::jsonb, 4);
+  perform ok('a sudden-death deal is accepted as a move', row.version = 5);
+
+  perform ok('finish_game refuses a draw',
+    raises(format('select public.finish_game(%L, -1)', g)));
+  perform ok('finish_game refuses no durak at all',
+    raises(format('select public.finish_game(%L, null)', g)));
+  perform ok('the refused draw left the game running',
+    (select status from public.games where id = g) = 'active');
+  perform ok('and moved nobody''s rating',
+    (select rating from public.profiles where id = a) = rating_a);
+  perform ok('and recorded no draw',
+    (select draws from public.profiles where id = a) = 0);
+
+  -- The game a sudden death settles is an ordinary result.
+  update public.games
+     set state = state || '{"finished": true, "durak": 0}'::jsonb
+   where id = g;
+  row := public.finish_game(g, 0);
+  perform ok('a game settled in sudden death finishes with its durak',
+    row.status = 'finished' and row.durak_id = a);
+  perform ok('the sudden-death durak has a loss',
+    (select losses from public.profiles where id = a) = 1);
+  perform ok('the survivor has a win',
+    (select wins from public.profiles where id = b) = 1);
+end
+$$;
+
 \echo '== name and picture =='
 
 do $$

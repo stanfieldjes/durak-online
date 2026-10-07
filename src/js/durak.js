@@ -30,6 +30,11 @@
  * someone actually pressing it, so the last card is never whisked away
  * unseen just because everyone happens to be out of cards.
  *
+ * There are no draws. When a round ends with nobody left holding cards, the
+ * players who went out on it play sudden death: six fresh cards each, no
+ * stock, same trump, and whoever is left holding cards is the durak. If that
+ * ties too, it is dealt again. See startSuddenDeath().
+ *
  * Because several players can act at once, every position carries a `version`
  * that increments on each move. Writers submit the version they built on and
  * the database rejects the write if it has moved on. See submit_move() in
@@ -59,6 +64,12 @@ export const MAX_SUIT_IN_DEAL = 4;
 export const RED_SUITS = ['H', 'D'];
 /** How many reshuffles to try for that before dealing what comes up. */
 const DEAL_ATTEMPTS = 200;
+/**
+ * Mixed into the table's seed to give each sudden-death round a shuffle of
+ * its own. Any odd constant would do; this one spreads consecutive rounds
+ * well apart.
+ */
+const SUDDEN_DEATH_SALT = 0x9e3779b1;
 
 export const SUIT_GLYPH = { S: '♠', H: '♥', D: '♦', C: '♣' };
 export const SUIT_NAME = { S: 'spades', H: 'hearts', D: 'diamonds', C: 'clubs' };
@@ -175,8 +186,11 @@ export function newGame(seed, playerCount) {
     passed: Array(n).fill(false),
     out: Array(n).fill(false),
     finished: false,
-    durak: null, // seat of the fool, or null on a draw
+    durak: null, // seat of the fool, once the game is over
+    // Always false now: a tie goes to sudden death. Kept because games that
+    // finished before that carry it, and the result screen still reads it.
     draw: false,
+    suddenDeath: 0, // how many sudden-death rounds have been dealt
     log: [{ t: 'deal', trump, players: n }],
   };
 
@@ -562,7 +576,7 @@ function canCoverAllSlots(hand, openAttacks, trump) {
  *
  * - Holding EXACTLY as many cards as open attacks is where the specific
  *   cards start to matter: beating everything would empty your hand at the
- *   same moment as the attacker's, which is a draw. That is only reachable if
+ *   same moment as the attacker's, which goes to sudden death. That is only reachable if
  *   some arrangement of your hand actually covers every open attack — hence
  *   the matching check, but only for this one exact-count case.
  */
@@ -689,19 +703,24 @@ function advance(state, nextAttacker) {
   const previousDefender = state.defender;
 
   if (state.deck.length === 0) {
-    for (let seat = 0; seat < state.playerCount; seat++) {
-      if (!state.out[seat] && state.hands[seat].length === 0) {
-        state.out[seat] = true;
-        state.log.push({ t: 'out', seat });
-      }
+    const stillIn = activeSeats(state);
+    const emptied = stillIn.filter((seat) => state.hands[seat].length === 0);
+    // Everyone still in ran out on the same round, so nobody is left holding
+    // cards and nobody can be the durak yet. They play it off.
+    if (emptied.length > 0 && emptied.length === stillIn.length) {
+      return startSuddenDeath(state, emptied);
+    }
+    for (const seat of emptied) {
+      state.out[seat] = true;
+      state.log.push({ t: 'out', seat });
     }
   }
 
   const remaining = activeSeats(state);
   if (remaining.length <= 1) {
     state.finished = true;
-    state.draw = remaining.length === 0;
-    state.durak = state.draw ? null : remaining[0];
+    state.draw = false;
+    state.durak = remaining[0];
     state.taking = false;
     state.passed = Array(state.playerCount).fill(true);
     state.log.push({ t: 'end', durak: state.durak, draw: state.draw });
@@ -719,6 +738,42 @@ function advance(state, nextAttacker) {
   state.defender = nextActive(state, attacker);
   state.taking = false;
   refreshPasses(state);
+  return state;
+}
+
+/**
+ * Nobody was left holding cards: deal the players in `seats` six fresh cards
+ * each from a new shuffle of the table's deck, with no stock, and play on.
+ *
+ * Everyone who went out before this round stays out and has already won.
+ * The trump suit does not change, and neither do the seed or the player
+ * count, so submit_move() accepts the new deal as it would any other move.
+ * The shuffle comes from the seed and the round number, so every browser
+ * arrives at the same cards, whichever of them submits the move that caused
+ * it. The lowest trump among the new hands leads, as at the start of a game.
+ */
+function startSuddenDeath(state, seats) {
+  const round = (state.suddenDeath ?? 0) + 1;
+  const rng = makeRng((Number(state.seed) ^ Math.imul(round, SUDDEN_DEATH_SALT)) >>> 0);
+  const deck = createDeck(rng, state.playerCount);
+
+  for (const seat of seats) state.hands[seat] = [];
+  for (let i = 0; i < HAND_SIZE; i++) {
+    for (const seat of seats) state.hands[seat].push(deck.pop());
+  }
+
+  state.deck = [];
+  state.table = [];
+  state.suddenDeath = round;
+
+  // Players who are out hold nothing, so the lowest trump is always a
+  // contender's. With no trump dealt at all, the first of them leads.
+  const lead = openingSeat(state.hands, state.trump, state.playerCount);
+  state.attacker = seats.includes(lead) ? lead : seats[0];
+  state.defender = nextActive(state, state.attacker);
+  state.taking = false;
+  refreshPasses(state);
+  state.log.push({ t: 'sudden-death', round, seats });
   return state;
 }
 
@@ -745,6 +800,13 @@ export function roleOf(state, seat) {
   return 'throwing in';
 }
 
+/** "Sudden death", with the round number from the second one on. */
+export function suddenDeathLabel(state) {
+  const round = state?.suddenDeath ?? 0;
+  if (round === 0) return '';
+  return round === 1 ? 'Sudden death' : `Sudden death, round ${round}`;
+}
+
 export function describe(state, seat) {
   if (state.finished) {
     if (state.draw) return 'Draw. Nobody is the fool.';
@@ -752,8 +814,18 @@ export function describe(state, seat) {
       ? 'You are the durak.'
       : 'You got out — someone else is the fool.';
   }
-  if (state.out[seat]) return 'You are out of cards. Waiting for the rest.';
+  if (state.out[seat]) {
+    return state.suddenDeath
+      ? 'You got out. The others are playing sudden death.'
+      : 'You are out of cards. Waiting for the rest.';
+  }
 
+  const text = describeRound(state, seat);
+  return state.suddenDeath ? `${suddenDeathLabel(state)}. ${text}` : text;
+}
+
+/** What a seat still in the game is being asked to do this round. */
+function describeRound(state, seat) {
   const full = nothingMoreFits(state);
 
   if (seat === state.defender) {
