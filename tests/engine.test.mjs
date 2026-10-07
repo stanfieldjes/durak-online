@@ -57,6 +57,21 @@ function auditCards(state, where) {
   return true;
 }
 
+/**
+ * A tie has just been turned into sudden death: the game goes on, `seats` are
+ * dealt six fresh cards each with no stock, and nobody else holds anything.
+ */
+function isSuddenDeathDeal(state, seats) {
+  return !state.finished
+    && !state.draw
+    && state.suddenDeath === 1
+    && state.deck.length === 0
+    && state.table.length === 0
+    && state.hands.every((h, seat) => h.length === (seats.includes(seat) ? 6 : 0))
+    && seats.every((seat) => !state.out[seat])
+    && state.log.at(-1)?.t === 'sudden-death';
+}
+
 function auditInvariants(state, where) {
   if (state.table.length > MAX_SLOTS) {
     fail(`${where}: ${state.table.length} cards on the table, max is ${MAX_SLOTS}`);
@@ -89,6 +104,7 @@ for (const players of [2, 3, 4, 6, 8]) {
   console.log(`Running ${GAMES_PER_SIZE} random playouts with ${players} players...`);
   const outcomes = new Array(players).fill(0);
   let draws = 0;
+  let suddenDeaths = 0;
   let longest = 0;
   let concurrentChoices = 0;
   let positions = 0;
@@ -141,11 +157,13 @@ for (const players of [2, 3, 4, 6, 8]) {
     if (state.finished) {
       if (state.draw) draws++;
       else outcomes[state.durak]++;
+      if (state.suddenDeath) suddenDeaths++;
     }
   }
 
   const spread = outcomes.map((n, s) => `seat${s} ${n}`).join(', ');
-  console.log(`  durak counts: ${spread}, draws ${draws}`);
+  console.log(`  durak counts: ${spread}, draws ${draws}, settled in sudden death ${suddenDeaths}`);
+  check(`${players}p: no game ends in a draw`, draws === 0);
   console.log(`  longest ${longest} plies, ${concurrentChoices}/${positions} positions had 2+ eligible players`);
 
   // With symmetric random play no seat should be wildly over-represented.
@@ -272,17 +290,14 @@ for (const players of [3, 4]) {
     }
     if (!state.finished) continue;
     const left = activeSeats(state);
-    if (state.draw) {
-      check(`${players}p game ${g}: a draw means nobody holds cards`, left.length === 0);
-      check(`${players}p game ${g}: a draw has no durak`, state.durak === null);
-    } else {
-      check(`${players}p game ${g}: exactly one player is left`, left.length === 1);
-      check(`${players}p game ${g}: the durak is that player`, state.durak === left[0]);
-      check(
-        `${players}p game ${g}: the durak still holds cards`,
-        state.hands[state.durak].length > 0
-      );
-    }
+    // A tie goes to sudden death, so every finished game has its one durak.
+    check(`${players}p game ${g}: the game does not end in a draw`, !state.draw);
+    check(`${players}p game ${g}: exactly one player is left`, left.length === 1);
+    check(`${players}p game ${g}: the durak is that player`, state.durak === left[0]);
+    check(
+      `${players}p game ${g}: the durak still holds cards`,
+      state.hands[state.durak]?.length > 0
+    );
   }
 }
 
@@ -323,7 +338,8 @@ console.log('Checking that hopelessness matches actual outcomes, not just card c
 
   // Exactly as many cards as open attacks, and a genuine covering arrangement
   // exists: beating everything empties the hand at the same moment the
-  // attacker's did, so this is a live draw and must NOT be forced.
+  // attacker's did, so this is a live tie and must NOT be forced. A tie is
+  // played off in sudden death rather than ending as a draw.
   {
     let s = base();
     s.hands[0] = [{ r: '8', s: 'D' }]; // exactly one card, and it beats the one attack
@@ -333,8 +349,8 @@ console.log('Checking that hopelessness matches actual outcomes, not just card c
 
     const beaten = applyMove(s, 0, { type: 'defend', card: { r: '8', s: 'D' }, slot: 0 });
     const after = applyMove(beaten, 0, { type: 'clear' });
-    check('beating it with the last card produces a draw, not a durak',
-      after.finished && after.draw && after.durak === null);
+    check('beating it with the last card goes to sudden death, not a durak or a draw',
+      isSuddenDeathDeal(after, [0, 1]));
   }
 
   // Exactly as many cards as open attacks, but the wrong ones: no covering
@@ -430,8 +446,8 @@ console.log('Checking that defending the last card ends the game without a pass 
 
   }
 
-  // The same shape, but the OTHER player has also emptied their hand: still
-  // a draw, reached without anyone pressing anything.
+  // The same shape, but the OTHER player has also emptied their hand: a tie,
+  // which goes to sudden death without anyone pressing anything.
   {
     let s = newGame(2, 2);
     s = { ...s, deck: [], table: [], discard: 30 };
@@ -442,7 +458,7 @@ console.log('Checking that defending the last card ends the game without a pass 
     s.hands[1] = [];
     const beaten = applyMove(s, 0, { type: 'defend', card: { r: '8', s: 'D' }, slot: 0 });
     const after = applyMove(beaten, 0, { type: 'clear' });
-    check('a simultaneous empty-hand finish is still a draw', after.finished && after.draw);
+    check('a simultaneous empty-hand finish goes to sudden death', isSuddenDeathDeal(after, [0, 1]));
   }
 }
 
@@ -603,12 +619,12 @@ console.log('Checking prompts never claim a beaten table when nothing was played
   }
 }
 
-/* ---- forced endings and the draw that survives them ------------------- */
+/* ---- forced endings, and the tie that survives them -------------------- */
 
 console.log('Checking forced endings...');
 {
   let forced = 0;
-  let draws = 0;
+  let suddenDeaths = 0;
   for (const players of [2, 3, 4, 6, 8]) {
     for (let g = 0; g < 800; g++) {
       const rng = makeRng(g * 31 + players);
@@ -631,17 +647,14 @@ console.log('Checking forced endings...');
         check(`${players}p game ${g}: the durak still holds cards`,
           state.hands[state.durak].length > 0);
       }
-      if (state.draw) {
-        draws++;
-        check(`${players}p game ${g}: a draw leaves nobody holding cards`,
-          state.hands.every((h) => h.length === 0));
-      }
+      check(`${players}p game ${g}: no game ends in a draw`, !state.draw);
+      if (state.suddenDeath) suddenDeaths++;
     }
   }
   console.log(`  ${forced} games ended early with no decision left to make`);
-  console.log(`  ${draws} games still reached a draw, so the tie is not shortcut away`);
+  console.log(`  ${suddenDeaths} games tied and went to sudden death, so the tie is not shortcut away`);
   check('forced endings actually happen', forced > 0);
-  check('draws are still reachable', draws > 0);
+  check('ties are still reachable, and go to sudden death', suddenDeaths > 0);
 }
 
 /* ---- beat rule -------------------------------------------------------- */

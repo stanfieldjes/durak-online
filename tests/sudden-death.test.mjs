@@ -10,6 +10,7 @@ import {
   describe,
   cardId,
   makeRng,
+  deckSize,
   HAND_SIZE,
 } from '../src/js/durak.js';
 
@@ -71,6 +72,27 @@ test('the sudden-death deal is twelve different cards', () => {
   const s = playOutTie(brinkOfTie());
   const ids = s.hands.flat().map(cardId);
   assert.equal(new Set(ids).size, ids.length);
+});
+
+/** Every card is somewhere: a hand, the table, the stock or the beaten pile. */
+function cardsAccountedFor(s) {
+  const onTable = s.table.reduce((n, slot) => n + (slot.def ? 2 : 1), 0);
+  return s.hands.flat().length + onTable + s.deck.length + s.discard;
+}
+
+test('the sudden-death deal comes out of the same deck, so no card is counted twice', () => {
+  for (const players of [2, 3, 4, 6, 8]) {
+    const before = brinkOfTie({ players, attacker: 0, defender: 1, out: [] });
+    // Everything not in the two last hands has been beaten already.
+    before.out = before.out.map((_, seat) => seat > 1);
+    before.discard = deckSize(players) - 2;
+    assert.equal(cardsAccountedFor(before), deckSize(players), `${players}p before`);
+
+    const s = playOutTie(before);
+    assert.equal(s.suddenDeath, 1);
+    assert.equal(cardsAccountedFor(s), deckSize(players), `${players}p after the deal`);
+    assert.equal(s.discard, deckSize(players) - 2 * HAND_SIZE);
+  }
 });
 
 test('every browser arrives at the same sudden-death deal', () => {
@@ -151,6 +173,7 @@ test('random games always end with a durak and never a draw', () => {
       const pool = keep.length && rng() < 0.85 ? keep : options;
       const [seat, move] = pool[Math.floor(rng() * pool.length)];
       s = applyMove(s, seat, move);
+      assert.equal(cardsAccountedFor(s), deckSize(players), `game ${g} lost or gained a card`);
     }
     assert.equal(s.draw, false, `game ${g}`);
     assert.ok(Number.isInteger(s.durak), `game ${g} has a durak`);

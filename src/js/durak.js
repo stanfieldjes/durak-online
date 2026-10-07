@@ -762,6 +762,12 @@ function startSuddenDeath(state, seats) {
     for (const seat of seats) state.hands[seat].push(deck.pop());
   }
 
+  // The new hands come out of the same deck as everything else: the beaten
+  // pile is gathered and shuffled, the hands are dealt from it, and what is
+  // left over goes back on the pile rather than forming a stock. Nobody holds
+  // anything when this runs, so every card was on the pile, and the count
+  // still adds up to the deck — hands, table, stock and pile together.
+  state.discard = deck.length;
   state.deck = [];
   state.table = [];
   state.suddenDeath = round;
