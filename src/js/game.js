@@ -137,8 +137,8 @@ let checkingIn = false;
 let checkInTimer = null;
 let closing = false;    // this browser asked to close or leave the table
 let clearTimer = null;
-let clearArmedFor = null; // the confirmed version the clear countdown belongs to
-let promptBarFor = null;  // the version the prompt's countdown bar was started for
+let clearArmedFor = null; // the pause (see pauseKey) the clear countdown belongs to
+let promptBarFor = null;  // the pause the prompt's countdown bar was started for
 
 /**
  * How far into the position's log sound and animation have already reacted.
@@ -1134,9 +1134,14 @@ const playerMoves = () => pending.filter((m) => m.type !== 'clear' && m.type !==
  *
  * Every browser at the table runs this, and every one whose seat is still in
  * the game submits the clear when its timer runs out. Whichever lands first
- * wins; the rest fail the version check and quietly drop theirs. Throwing in
- * a card, or anyone else's clear arriving, changes the version and cancels
- * the countdown.
+ * wins; the rest fail the version check and quietly drop theirs.
+ *
+ * The countdown belongs to what is on the table (see pauseKey), not to the
+ * position's version. Somebody pressing Done moves the version on without
+ * changing a card, so the countdown carries on from where it was rather than
+ * starting again. A card thrown in, a take, or the table clearing does change
+ * the table, and that starts a fresh one. submit_move() holds a clear to the
+ * same rule, timing the pause from the last write that changed the table.
  */
 function scheduleClear() {
   const s = confirmed;
@@ -1144,13 +1149,25 @@ function scheduleClear() {
     cancelClear();
     return;
   }
-  if (clearArmedFor === s.version) return;
+  const key = pauseKey(s);
+  if (clearArmedFor === key) return;
 
   cancelClear();
-  clearArmedFor = s.version;
+  clearArmedFor = key;
   if (mySeat !== null && canClear(s, mySeat)) {
     clearTimer = setTimeout(fireClear, clearDelayMs(s));
   }
+}
+
+/**
+ * What a pause before clearing is about: the cards on the table, and whether
+ * the defender is taking them. Two positions with the same key are the same
+ * pause, however many Done presses lie between them. A round always empties
+ * the table before the next one starts, so a key never comes round again
+ * while a countdown for it is still running.
+ */
+function pauseKey(s) {
+  return JSON.stringify([s.table, Boolean(s.taking)]);
 }
 
 function cancelClear() {
@@ -1161,7 +1178,7 @@ function cancelClear() {
 
 function fireClear() {
   clearTimer = null;
-  if (!confirmed || confirmed.version !== clearArmedFor || !canClear(confirmed, mySeat)) return;
+  if (!confirmed || pauseKey(confirmed) !== clearArmedFor || !canClear(confirmed, mySeat)) return;
 
   // One of our own moves is still on its way. It will change the version if
   // it lands; check back shortly in case it gets dropped instead.

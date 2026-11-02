@@ -157,6 +157,12 @@ create table if not exists public.games (
 );
 
 alter table public.games add column if not exists rating_delta jsonb;
+
+-- When the cards on the table last changed. The pause before a finished round
+-- clears is timed from here rather than from updated_at, so pressing Done
+-- does not start it again. Written only by submit_move(); NULL until a game's
+-- first move, and on rows from before it existed, where updated_at stands in.
+alter table public.games add column if not exists pause_since timestamptz;
 alter table public.games drop column if exists score_delta;
 
 create index if not exists games_status_created_idx
@@ -697,6 +703,7 @@ declare
   room      int;
   exhausted boolean;
   delay_ms  int;
+  table_changed boolean;
 begin
   if me is null then
     raise exception 'not authenticated';
@@ -753,10 +760,12 @@ begin
   end if;
 
   -- A clear (the table emptying itself after a round) must wait until the
-  -- position has been on show long enough. updated_at is when that position
-  -- was written, so one slow or modified browser cannot cut the pause short
-  -- for everyone. The engine marks a clear by making {"t":"clear"} the first
-  -- new log entry.
+  -- table has been on show long enough. pause_since is when the cards on it
+  -- last changed, so one slow or modified browser cannot cut the pause short
+  -- for everyone. It is not updated_at: pressing Done moves the position on
+  -- without touching a card, and must not start the wait again. A row from
+  -- before the column existed falls back to updated_at. The engine marks a
+  -- clear by making {"t":"clear"} the first new log entry.
   --
   -- If the table cannot take another card nobody can throw in, so only the
   -- short quick_clear_delay_ms applies. That is six down, or the defender has
@@ -788,13 +797,27 @@ begin
          group by card->>'r'
       ) ranks;
     delay_ms := case when room <= 0 or exhausted then row.quick_clear_delay_ms else row.clear_delay_ms end;
-    if now() < row.updated_at + delay_ms * interval '1 millisecond' then
+    if now() < coalesce(row.pause_since, row.updated_at) + delay_ms * interval '1 millisecond' then
       raise exception 'too early to clear the table';
     end if;
   end if;
 
+  -- The pause restarts only when the table itself changes: a card down, a
+  -- take, or the table clearing. A Done press, or anything else that leaves
+  -- the cards where they were, keeps the time it already had. Mirrors
+  -- pauseKey() in game.js.
+  table_changed :=
+    p_state->'table' is distinct from row.state->'table'
+    or coalesce((p_state->>'taking')::boolean, false)
+       is distinct from coalesce((row.state->>'taking')::boolean, false);
+
   update games
-     set state = p_state, version = row.version + 1
+     set state = p_state,
+         version = row.version + 1,
+         pause_since = case
+           when table_changed then now()
+           else coalesce(row.pause_since, row.updated_at)
+         end
    where id = p_game
   returning * into row;
 

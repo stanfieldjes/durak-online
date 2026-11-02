@@ -431,8 +431,9 @@ function removeFromHand(hand, card) {
 }
 
 /**
- * A card landing on the table gives every attacker a fresh chance to throw in,
- * so every earlier Done is forgotten.
+ * A new round, or a take, gives every attacker a fresh chance to throw in, so
+ * every earlier Done is forgotten. (A card landing mid-round only sometimes
+ * does: see notePlayed().)
  *
  * `passed` records only an actual press. Attackers are not passed just because
  * they hold no matching rank: a round ends when the attackers say it ends, not
@@ -443,6 +444,26 @@ function removeFromHand(hand, card) {
 function refreshPasses(state) {
   for (let seat = 0; seat < state.playerCount; seat++) {
     state.passed[seat] = state.out[seat] || seat === state.defender;
+  }
+}
+
+/**
+ * A card has just gone down on the table. Throw-ins have to match a rank
+ * already showing, so what anyone could throw in only grows when the card
+ * brings a rank the table did not have. Only then is every Done forgotten.
+ *
+ * A card of a rank already showing leaves the choice exactly where it was, so
+ * attackers who said they were done stay done and do not have to press Done
+ * again. The one exception is whoever played it: putting a card down shows
+ * they were not done after all, so their own Done is cleared.
+ *
+ * `newRank` is decided before the card is placed.
+ */
+function notePlayed(state, seat, newRank) {
+  if (newRank) {
+    refreshPasses(state);
+  } else if (seat !== state.defender) {
+    state.passed[seat] = false;
   }
 }
 
@@ -468,10 +489,11 @@ export function applyMove(prev, seat, move) {
       if (!legalAttacks(state, seat).some((c) => sameCard(c, move.card))) {
         throw new IllegalMove(illegalAttackReason(state, seat));
       }
+      const newRank = !tableRanks(state).has(move.card.r);
       const card = removeFromHand(state.hands[seat], move.card);
       state.table.push({ atk: card, def: null });
       state.log.push({ t: 'attack', seat, card });
-      refreshPasses(state);
+      notePlayed(state, seat, newRank);
       break;
     }
 
@@ -479,10 +501,11 @@ export function applyMove(prev, seat, move) {
       if (!legalDefenses(state, seat, move.slot).some((c) => sameCard(c, move.card))) {
         throw new IllegalMove('That card does not beat the attack.');
       }
+      const newRank = !tableRanks(state).has(move.card.r);
       const card = removeFromHand(state.hands[seat], move.card);
       state.table[move.slot].def = card;
       state.log.push({ t: 'defend', seat, card, slot: move.slot });
-      refreshPasses(state);
+      notePlayed(state, seat, newRank);
       break;
     }
 

@@ -562,7 +562,7 @@ console.log('Checking when Done is offered...');
   m = { ...m, deck: m.deck, taking: false, attacker: 0, defender: 1, out: [false, false, false, false] };
   m.trump = 'S';
   m.hands[0] = [{ r: '6', s: 'H' }, { r: 'A', s: 'C' }];
-  m.hands[1] = [{ r: 'K', s: 'D' }, { r: 'K', s: 'C' }];
+  m.hands[1] = [{ r: 'K', s: 'D' }, { r: 'K', s: 'C' }, { r: 'A', s: 'H' }];
   m.hands[2] = [{ r: '6', s: 'C' }];
   m.hands[3] = [{ r: 'Q', s: 'H' }];
   m.table = [{ atk: { r: '6', s: 'D' }, def: null }];
@@ -575,9 +575,48 @@ console.log('Checking when Done is offered...');
   const all = applyMove(two, 2, { type: 'pass' });
   check('beaten table, all 3 attackers done: cleared at once', all.table.length === 0 && all.log.some((e) => e.t === 'beaten'));
 
+  // A six is already on the table, so another six adds nothing anyone could
+  // throw in: seat 0 said it was done, and it stays done.
   const thrown = applyMove(one, 2, { type: 'attack', card: { r: '6', s: 'C' } });
-  check('a throw-in wipes earlier Done presses', !thrown.passed[0]);
+  check('a throw-in of a rank already down keeps earlier Done presses', thrown.passed[0]);
+  check('the thrower is no longer done', !thrown.passed[2]);
   check('no Done while the new card is unanswered', [0, 2, 3].every((x) => !canPass(thrown, x)));
+
+  // Beaten with a king, also already showing: still nothing new to throw.
+  const kept = applyMove(thrown, 1, { type: 'defend', card: { r: 'K', s: 'C' }, slot: 1 });
+  check('a defence of a rank already down keeps Done presses', kept.passed[0] && canClear(kept));
+  check('a seat that stayed done is not asked again', !canPass(kept, 0));
+  check('the others are still offered Done', canPass(kept, 2) && canPass(kept, 3));
+  const keptTwo = applyMove(kept, 2, { type: 'pass' });
+  const keptAll = applyMove(keptTwo, 3, { type: 'pass' });
+  check('once the rest press Done the table clears, without seat 0 pressing again',
+    keptAll.table.length === 0 && keptAll.log.some((e) => e.t === 'beaten'));
+
+  // Beaten with a seven instead: sevens are new, so anyone holding one may
+  // want to throw it in, and every Done is forgotten.
+  const fresh = { ...thrown, hands: thrown.hands.map((h) => h.slice()) };
+  fresh.hands[1] = [{ r: '7', s: 'C' }, { r: 'K', s: 'C' }];
+  const newRank = applyMove(fresh, 1, { type: 'defend', card: { r: '7', s: 'C' }, slot: 1 });
+  check('a defence that brings a new rank wipes earlier Done presses', !newRank.passed[0]);
+  check('and offers Done again', canPass(newRank, 0));
+
+  // During a take: a throw-in of a rank already down keeps everyone else's
+  // Done, so the take does not wait on presses it already had.
+  let tk = newGame(21, 3);
+  tk = { ...tk, taking: false, attacker: 0, defender: 1, out: [false, false, false], trump: 'S' };
+  tk.hands[0] = [{ r: '9', s: 'H' }, { r: 'A', s: 'C' }];
+  tk.hands[1] = [{ r: '7', s: 'D' }, { r: '8', s: 'D' }];
+  tk.hands[2] = [{ r: '9', s: 'C' }, { r: '9', s: 'D' }];
+  tk.table = [{ atk: { r: '9', s: 'S' }, def: null }];
+  tk.passed = [false, true, false];
+  tk = applyMove(tk, 1, { type: 'take' });
+  tk = applyMove(tk, 0, { type: 'pass' });
+  check('take: seat 0 is done', tk.passed[0] && tk.taking);
+  tk = applyMove(tk, 2, { type: 'attack', card: { r: '9', s: 'C' } });
+  check('take: a nine thrown onto nines keeps seat 0 done', tk.passed[0] && !tk.passed[2] && tk.taking);
+  tk = applyMove(tk, 2, { type: 'pass' });
+  check('take: one more Done from the thrower hands the cards over',
+    tk.table.length === 0 && tk.log.some((e) => e.t === 'taken'));
 
   // Every attacker already out of cards: the defence still gets its pause.
   let e = newGame(4, 3);

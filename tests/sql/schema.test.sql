@@ -340,6 +340,84 @@ begin
 end
 $$;
 
+\echo '== pressing Done does not restart the pause before a clear =='
+
+do $$
+declare
+  a      uuid := test_player('pause_one');
+  b      uuid := test_player('pause_two');
+  c      uuid := test_player('pause_three');
+  g      uuid;
+  deal   jsonb;
+  beaten jsonb;
+  row    public.games;
+  since  timestamptz;
+begin
+  perform test_become(a);
+  row := public.create_game(3);
+  g := row.id;
+  insert into public.game_players (game_id, seat, player_id) values (g, 1, b), (g, 2, c);
+  deal := jsonb_build_object('seed', row.seed, 'trump', 'H', 'playerCount', 3);
+
+  -- Seat 1 has beaten the one attack and still holds cards, so the table could
+  -- take more: the long pause applies.
+  beaten := deal || '{"version": 7, "attacker": 0, "defender": 1, "taking": false,
+    "table": [{"atk": {"r": "6", "s": "S"}, "def": {"r": "9", "s": "S"}}],
+    "hands": [[{"r": "7", "s": "C"}], [{"r": "J", "s": "D"}, {"r": "Q", "s": "D"}],
+              [{"r": "8", "s": "C"}]],
+    "out": [false, false, false], "passed": [false, true, false],
+    "log": [{"t": "attack"}, {"t": "defend"}], "finished": false, "draw": false}'::jsonb;
+
+  -- The defence went down 20 seconds ago; the pause is 10.
+  update public.games
+     set status = 'active', version = 7, state = beaten,
+         pause_since = now() - interval '20 seconds'
+   where id = g;
+  since := now() - interval '20 seconds';
+
+  -- Seat 2 presses Done. Nothing on the table moves.
+  perform test_become(c);
+  row := public.submit_move(g,
+    jsonb_set(jsonb_set(beaten, '{version}', '8'), '{passed}', '[false, true, true]')
+      || '{"log": [{"t": "attack"}, {"t": "defend"}, {"t": "pass", "seat": 2}]}'::jsonb, 7);
+  perform ok('a Done press is recorded', row.version = 8);
+  perform ok('a Done press leaves the pause where it was', row.pause_since = since);
+  perform ok('even though the row itself was just written', row.updated_at > since);
+
+  -- The clear is timed from the defence, not from the Done press.
+  perform test_become(a);
+  row := public.submit_move(g,
+    deal || '{"version": 9, "attacker": 1, "defender": 2, "taking": false, "table": [],
+      "hands": [[{"r": "7", "s": "C"}], [{"r": "J", "s": "D"}, {"r": "Q", "s": "D"}],
+                [{"r": "8", "s": "C"}]],
+      "out": [false, false, false], "passed": [true, false, true],
+      "log": [{"t": "attack"}, {"t": "defend"}, {"t": "pass", "seat": 2}, {"t": "clear"}],
+      "finished": false, "draw": false}'::jsonb, 8);
+  perform ok('the table clears once the pause since the defence is over', row.version = 9);
+  perform ok('clearing the table starts a new pause', row.pause_since = now());
+
+  -- Back to a fresh beaten table: a pause that has only just begun.
+  update public.games
+     set version = 10, state = jsonb_set(beaten, '{version}', '10'),
+         pause_since = now() - interval '3 seconds'
+   where id = g;
+  perform ok('a clear three seconds into the pause is still refused',
+    raises(format('select public.submit_move(%L, %L::jsonb, 10)', g,
+      deal || '{"version": 11, "attacker": 1, "defender": 2, "taking": false, "table": [],
+        "hands": [[], [], []], "out": [false, false, false], "passed": [false, false, false],
+        "log": [{"t": "attack"}, {"t": "defend"}, {"t": "clear"}],
+        "finished": false, "draw": false}')));
+
+  -- A card thrown in does change the table, so it starts the pause again.
+  row := public.submit_move(g,
+    jsonb_set(beaten, '{version}', '11')
+      || '{"table": [{"atk": {"r": "6", "s": "S"}, "def": {"r": "9", "s": "S"}},
+                     {"atk": {"r": "6", "s": "C"}, "def": null}],
+           "log": [{"t": "attack"}, {"t": "defend"}, {"t": "attack"}]}'::jsonb, 10);
+  perform ok('a card thrown in restarts the pause', row.pause_since = now());
+end
+$$;
+
 \echo '== name and picture =='
 
 do $$
